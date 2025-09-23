@@ -1,6 +1,7 @@
 """Capture a raw RT-950 Pro clone dump over the serial interface."""
 from __future__ import annotations
 
+import argparse
 import random
 from datetime import datetime
 from pathlib import Path
@@ -11,10 +12,26 @@ HANDSHAKE_STRING = b"PROGRAMBT9000U"
 ACK = b"\x06"
 READ_BLOCK = 0x80
 ENCRYPT_STRINGS = [
-    b"BHT ", b"CO 7", b"A ES", b" EIY", b"M PQ",
-    b"XN Y", b"RVB ", b" HQP", b"W RC", b"MS N",
-    b" SAT", b"K DH", b"ZO R", b"C SL", b"6RB ",
-    b" JCG", b"PN V", b"J PK", b"EK L", b"I LZ",
+    b"BHT ",
+    b"CO 7",
+    b"A ES",
+    b" EIY",
+    b"M PQ",
+    b"XN Y",
+    b"RVB ",
+    b" HQP",
+    b"W RC",
+    b"MS N",
+    b" SAT",
+    b"K DH",
+    b"ZO R",
+    b"C SL",
+    b"6RB ",
+    b" JCG",
+    b"PN V",
+    b"J PK",
+    b"EK L",
+    b"I LZ",
 ]
 
 
@@ -112,6 +129,23 @@ def read_clone_dump(port: str, baud: int, output: Path) -> None:
         print(f"Wrote {len(raw)} bytes to {output}")
 
 
-if __name__ == "__main__":
-    read_clone_dump("COM5", 115200, Path("rt950pro_clone.bin"))
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Capture a raw RT-950 Pro clone image")
+    parser.add_argument("--port", default="COM5", help="Serial port presented by the radio (default: COM5)")
+    parser.add_argument("--baud", type=int, default=115200, help="Clone baud rate (default: 115200)")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("rt950pro_clone.bin"),
+        help="Output file for the decrypted clone image",
+    )
+    args = parser.parse_args()
 
+    try:
+        read_clone_dump(args.port, args.baud, args.output)
+    except KeyboardInterrupt:
+        print("Interrupted")
+
+
+if __name__ == "__main__":
+    main()

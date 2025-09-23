@@ -214,7 +214,7 @@ def _cmd_regression_dat_csv(
 
 
 def _build_image_summary(image: RadioImage, limit: int) -> dict[str, object]:
-    """Create a summary payload from a :class:`RadioImage`."""
+    """Create a summary payload from a :class:RadioImage."""
 
     entries = []
     for index, channel in image.iter_populated_channels():
@@ -231,13 +231,43 @@ def _build_image_summary(image: RadioImage, limit: int) -> dict[str, object]:
         if limit and len(entries) >= limit:
             break
 
-    return {
+    summary: dict[str, object] = {
         "channels_reported": len(entries),
         "empty_slots": len(image.empty_slot_indexes()),
         "entries": entries,
     }
 
-
+    if image.vfo:
+        summary["vfo"] = [
+            {
+                "index": idx,
+                "rx_hz": entry.rx_hz,
+                "offset_hz": entry.offset_hz,
+                "offset_direction": entry.offset_direction,
+                "tx_power": entry.tx_power.name,
+                "bandwidth": entry.bandwidth.name,
+            }
+            for idx, entry in enumerate(image.vfo)
+        ]
+    if image.function:
+        summary["function"] = image.function.values
+    if image.dtmf:
+        summary["dtmf"] = {
+            "current_id": image.dtmf.current_id,
+            "ptt_id_mode": image.dtmf.ptt_id_mode,
+            "last_time_send": image.dtmf.last_time_send,
+            "last_time_stop": image.dtmf.last_time_stop,
+            "code_groups": image.dtmf.code_groups[:5],
+        }
+    if image.modulation:
+        summary["modulation"] = {
+            "fm_current_channel": image.modulation.fm_current_channel,
+            "am_current_channel": image.modulation.am_current_channel,
+            "ssb_current_channel": image.modulation.ssb_current_channel,
+        }
+    if image.aprs:
+        summary["aprs"] = image.aprs.fields
+    return summary
 def _read_channel_bytes(input_arg: str, treat_as_hex: bool) -> bytes:
     """Load raw channel bytes either from a file or from a hex string."""
 
@@ -292,3 +322,4 @@ def _channel_to_dict(record: ChannelRecord) -> dict[str, object]:
         "fhss_code": record.fhss_code,
         "name": record.name,
     }
+

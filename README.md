@@ -1,6 +1,6 @@
 # RT-950 Pro CHIRP Driver Workspace
 
-This repository tracks reverse-engineering notes, tooling, and implementation work for adding Baofeng Tech RT-950 Pro clone-mode support to [CHIRP](https://chirp.danplanet.com/).
+This repository tracks reverse-engineering notes, tooling, and implementation work for adding Radtel RT-950 Pro clone-mode support to [CHIRP](https://chirp.danplanet.com/).
 
 ## Repository Layout
 - `DESIGN.md` - fixed definition of done, protocol notes, and memory map.

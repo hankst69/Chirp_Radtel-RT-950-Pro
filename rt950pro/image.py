@@ -1,7 +1,12 @@
 """Representation of RT-950 Pro radio images."""
 from __future__ import annotations
 
-__all__ = ["CHANNEL_COUNT", "CHANNEL_SIZE", "CHANNEL_SECTION_BYTES", "RadioImage"]
+__all__ = [
+    "CHANNEL_COUNT",
+    "CHANNEL_SIZE",
+    "CHANNEL_SECTION_BYTES",
+    "RadioImage",
+]
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +15,18 @@ import logging
 
 from .channel import ChannelRecord
 from .logging import get_logger
+from .sections import (
+    APRSSettings,
+    DTMFSettings,
+    FunctionSettings,
+    ModulationSettings,
+    VFOSettings,
+    parse_aprs_section,
+    parse_dtmf_section,
+    parse_function_section,
+    parse_modulation_sections,
+    parse_vfo_section,
+)
 
 _CHANNEL_LOG = get_logger("image")
 
@@ -22,9 +39,16 @@ CHANNEL_SIZE = 32
 CHANNEL_SECTION_BYTES = CHANNEL_COUNT * CHANNEL_SIZE
 """Total byte length of the channel section within the clone image."""
 
+VFO_SECTION_BYTES = 96
+FUNCTION_SECTION_BYTES = 96
+DTMF_SECTION_BYTES = 384
+MODULATION_SECTION_BYTES = 256
+MODULATION_NAME_SECTION_BYTES = 768
+APRS_SECTION_BYTES = 128
+
 
 def _chunk(iterable: Sequence[int], size: int) -> Iterable[bytes]:
-    """Yield fixed-size chunks from ``iterable`` using the provided ``size``."""
+    """Yield fixed-size chunks from `iterable` using the provided `size`."""
 
     for i in range(0, len(iterable), size):
         chunk = iterable[i : i + size]
@@ -34,10 +58,15 @@ def _chunk(iterable: Sequence[int], size: int) -> Iterable[bytes]:
 
 @dataclass
 class RadioImage:
-    """Container for channel records and the untouched remainder bytes."""
+    """Container for clone image sections."""
 
     channels: List[ChannelRecord]
-    remainder: bytes
+    vfo: Optional[List[VFOSettings]] = None
+    function: Optional[FunctionSettings] = None
+    dtmf: Optional[DTMFSettings] = None
+    modulation: Optional[ModulationSettings] = None
+    aprs: Optional[APRSSettings] = None
+    remainder: bytes = b""
 
     @classmethod
     def from_bytes(
@@ -55,15 +84,63 @@ class RadioImage:
             )
 
         channel_bytes = memoryview(blob)[:CHANNEL_SECTION_BYTES]
-        channels = []
+        channels: List[ChannelRecord] = []
         for index, chunk in enumerate(_chunk(channel_bytes, CHANNEL_SIZE)):
             try:
                 record = ChannelRecord.from_bytes(chunk, logger=logger)
             except ValueError as exc:
                 raise ValueError(f"Failed to decode channel {index}: {exc}") from exc
             channels.append(record)
+
+        offset = CHANNEL_SECTION_BYTES
+        vfo: Optional[List[VFOSettings]] = None
+        function: Optional[FunctionSettings] = None
+        dtmf: Optional[DTMFSettings] = None
+        modulation: Optional[ModulationSettings] = None
+        aprs: Optional[APRSSettings] = None
+
+        if len(blob) >= offset + VFO_SECTION_BYTES:
+            vfo_data = bytes(blob[offset : offset + VFO_SECTION_BYTES])
+            vfo = parse_vfo_section(vfo_data)
+        offset += VFO_SECTION_BYTES
+
+        if len(blob) >= offset + FUNCTION_SECTION_BYTES:
+            function_data = bytes(blob[offset : offset + FUNCTION_SECTION_BYTES])
+            function = parse_function_section(function_data)
+        offset += FUNCTION_SECTION_BYTES
+
+        if len(blob) >= offset + DTMF_SECTION_BYTES:
+            dtmf_data = bytes(blob[offset : offset + DTMF_SECTION_BYTES])
+            dtmf = parse_dtmf_section(dtmf_data)
+        offset += DTMF_SECTION_BYTES
+
+        if len(blob) >= offset + MODULATION_SECTION_BYTES + MODULATION_NAME_SECTION_BYTES:
+            mod_params = bytes(blob[offset : offset + MODULATION_SECTION_BYTES])
+            mod_names = bytes(
+                blob[
+                    offset
+                    + MODULATION_SECTION_BYTES : offset
+                    + MODULATION_SECTION_BYTES
+                    + MODULATION_NAME_SECTION_BYTES
+                ]
+            )
+            modulation = parse_modulation_sections(mod_params, mod_names)
+        offset += MODULATION_SECTION_BYTES + MODULATION_NAME_SECTION_BYTES
+
+        if len(blob) >= offset + APRS_SECTION_BYTES:
+            aprs_data = bytes(blob[offset : offset + APRS_SECTION_BYTES])
+            aprs = parse_aprs_section(aprs_data)
+
         remainder = bytes(blob[CHANNEL_SECTION_BYTES:])
-        return cls(channels=channels, remainder=remainder)
+        return cls(
+            channels=channels,
+            vfo=vfo,
+            function=function,
+            dtmf=dtmf,
+            modulation=modulation,
+            aprs=aprs,
+            remainder=remainder,
+        )
 
     @classmethod
     def from_file(
@@ -72,7 +149,7 @@ class RadioImage:
         *,
         logger: Optional[logging.Logger] = None,
     ) -> "RadioImage":
-        """Load an image from ``path`` then parse it via :meth:`from_bytes`."""
+        """Load an image from `path` then parse it via :meth:rom_bytes."""
 
         try:
             data = path.read_bytes()
@@ -108,7 +185,7 @@ class RadioImage:
                 yield index, channel
 
     def save(self, path: Path, *, logger: Optional[logging.Logger] = None) -> None:
-        """Write the current image representation to ``path``."""
+        """Write the current image representation to `path`."""
 
         data = self.to_bytes(logger=logger)
         try:
