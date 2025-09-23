@@ -3,25 +3,32 @@
 This repository tracks reverse-engineering notes, tooling, and implementation work for adding Baofeng Tech RT-950 Pro clone-mode support to [CHIRP](https://chirp.danplanet.com/).
 
 ## Repository Layout
-- `DESIGN.md` ? fixed definition of done, protocol notes, and memory map.
-- `IMPLEMENTATION.md` ? living status log and task board tied to the design.
-- `AGENTS.md` ? primary contacts and collaboration expectations.
-- `Reference/` ? vendor CPS decompilation and clean-room export utility from prior work.
+- `DESIGN.md` - fixed definition of done, protocol notes, and memory map.
+- `IMPLEMENTATION.md` - living status log and task board tied to the design.
+- `AGENTS.md` - primary contacts and collaboration expectations.
+- `Reference/` - vendor CPS decompilation and clean-room export utility from prior work.
 
 ## Development Environment
 1. Create and activate a Python 3.11 virtual environment:
    ```powershell
-   c:\Python\python_3.11\python.exe -m venv .venv
-   .\.venv\Scripts\Activate.ps1
+   c:\\Python\\python_3.11\\python.exe -m venv .venv
+   .\\.venv\\Scripts\\Activate.ps1
    pip install --upgrade pip
    ```
-2. Dependencies will be listed in `requirements.txt` once the harness is implemented.
+2. Install dependencies as they are added: `pip install -r requirements.txt`.
 3. Keep tooling Python-only so tests can run without a CHIRP install; CHIRP integration will reference the same modules.
 
 ## Planned Tooling
 - Standalone harness to decode/encode RT-950 Pro `.dat` images.
 - CSV translator compatible with `Reference/950Pro Export` artifacts for regression checks.
 - Optional serial transport wrapper for talking to a physical radio when connected.
+
+## Harness Commands
+- `python -m rt950pro image summary <image.dat> [--limit N]` - summarise populated channels in a raw clone image.
+- `python -m rt950pro image dat-summary <codeplug.dat> [--limit N] [--assembly path]` - summarise channels from a CPS `.dat` file (requires `pythonnet` and the vendor assembly).
+- `python -m rt950pro regression dat-csv <codeplug.dat> <channels.csv> [--assembly path] [--limit N]` - compare CPS `.dat` channel data with the CSV export.
+- `python -m rt950pro channel decode --hex <64-hex-chars>` - decode a single 32-byte channel blob into JSON.
+- `python -m rt950pro channel encode ...` - placeholder; emits a `MOCK:` warning until implemented.
 
 ## Testing Philosophy
 - Prefer end-to-end binary comparisons over mocks; when mocking is unavoidable, log a warning so the shim can be revisited.
@@ -32,3 +39,4 @@ This repository tracks reverse-engineering notes, tooling, and implementation wo
 - Review `DESIGN.md` for scope; propose design changes before editing that file.
 - Update `IMPLEMENTATION.md` with progress notes and open questions as work advances.
 - Coordinate on-radio experiments with Nathan (_2E0NBS_).
+

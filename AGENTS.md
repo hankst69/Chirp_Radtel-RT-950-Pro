@@ -9,5 +9,7 @@
 - Responsibilities: Produce CHIRP driver code, automated harness, documentation, and testing assets in alignment with DESIGN.md.
 
 ## Future Contributors
+- Adopt Python docstrings ("""...""") for all public functions, methods, and classes to keep autodoc coverage complete.
 - Encourage pull requests for documentation updates, harness improvements, and expanded test coverage.
 - Coordinate any on-radio testing through Nathan before merging changes affecting the clone protocol.
+
