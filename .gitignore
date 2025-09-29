@@ -4,3 +4,7 @@ logs/
 __pycache__/
 *.pyc
 rt950pro_clone.bin
+portable_python/
+dumps/
+.agent_tasks/
+scripts/tmp/
