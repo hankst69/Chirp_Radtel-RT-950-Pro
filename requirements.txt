@@ -1,4 +1,7 @@
 # Requirements for the RT-950 Pro harness will be added as implementation progresses.
 pythonnet>=3.0
 pyserial>=3.5
+ddt>=1.7
+requests>=2.32
+lark>=1.3
 

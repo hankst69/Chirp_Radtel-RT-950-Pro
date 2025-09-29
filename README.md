@@ -11,8 +11,8 @@ This repository tracks reverse-engineering notes, tooling, and implementation wo
 ## Development Environment
 1. Create and activate a Python 3.11 virtual environment:
    ```powershell
-   c:\\Python\\python_3.11\\python.exe -m venv .venv
-   .\\.venv\\Scripts\\Activate.ps1
+   c:\Python\python_3.11\python.exe -m venv .venv
+   .\.venv\Scripts\Activate.ps1
    pip install --upgrade pip
    ```
 2. Install dependencies as they are added: `pip install -r requirements.txt`.
@@ -24,11 +24,23 @@ This repository tracks reverse-engineering notes, tooling, and implementation wo
 - Optional serial transport wrapper for talking to a physical radio when connected.
 
 ## Harness Commands
+- `python -m rt950pro image clone-read --port COM5 [--output dump.bin] [--baud 115200]` - capture a clone dump over the serial link (writes a decrypted buffer).
+- `python -m rt950pro image clone-write --port COM5 --input rt950pro_clone.bin` - push a prepared clone image back to the radio.
 - `python -m rt950pro image summary <image.dat> [--limit N]` - summarise populated channels in a raw clone image.
 - `python -m rt950pro image dat-summary <codeplug.dat> [--limit N] [--assembly path]` - summarise channels from a CPS `.dat` file (requires `pythonnet` and the vendor assembly).
 - `python -m rt950pro regression dat-csv <codeplug.dat> <channels.csv> [--assembly path] [--limit N]` - compare CPS `.dat` channel data with the CSV export.
 - `python -m rt950pro channel decode --hex <64-hex-chars>` - decode a single 32-byte channel blob into JSON.
-- `python -m rt950pro channel encode ...` - placeholder; emits a `MOCK:` warning until implemented.
+- `python -m rt950pro channel encode ...` - placeholder; emits a `MOCK:` warning until implemented in the CLI, though the underlying `RadioImage` encoder now supports round trips.
+
+## Testing
+- Automated: `python -m pytest` — validates byte-stable round trips for `rt950pro_clone.bin` and ensures mutated configuration data survives encode/decode cycles.
+- Manual smoke tests:
+  - `python -m rt950pro channel decode --hex <64 hex chars>`
+  - `python -m rt950pro image clone-read --port COM5 --output rt950pro_clone.bin`
+  - `python -m rt950pro image clone-write --port COM5 --input rt950pro_clone.bin`
+  - `python -m rt950pro image summary rt950pro_clone.bin --limit 5`
+  - `python -m rt950pro image dat-summary Reference/950Pro Export/Radio.dat --limit 5 --assembly "C:\Program Files (x86)\RT-950PRO_CPS\BT-RT950PRO_CPS.exe"`
+  - `python -m rt950pro regression dat-csv Reference/950Pro Export/Radio.dat Reference/950Pro Export/channels.csv --assembly "C:\Program Files (x86)\RT-950PRO_CPS\BT-RT950PRO_CPS.exe"`
 
 ## Testing Philosophy
 - Prefer end-to-end binary comparisons over mocks; when mocking is unavoidable, log a warning so the shim can be revisited.
@@ -39,4 +51,3 @@ This repository tracks reverse-engineering notes, tooling, and implementation wo
 - Review `DESIGN.md` for scope; propose design changes before editing that file.
 - Update `IMPLEMENTATION.md` with progress notes and open questions as work advances.
 - Coordinate on-radio experiments with Nathan (_2E0NBS_).
-
