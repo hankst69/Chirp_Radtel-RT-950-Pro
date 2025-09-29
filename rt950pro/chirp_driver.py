@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Dict, Iterable, Optional, Tuple
 
 from .channel import Bandwidth, ChannelRecord, Modulation, PowerLevel, ToneMode
 from .image import CHANNEL_COUNT, CHANNEL_SECTION_BYTES, RadioImage
@@ -354,6 +354,51 @@ _DTMF_ID_MAXLEN = 5
 _DTMF_CODE_MAXLEN = 6
 
 _DTMF_MODE_CHOICES = [('Off', 0), ('BOT', 1), ('EOT', 2), ('Both', 3)]
+
+
+
+def _build_memory_extra(channel: ChannelRecord) -> RadioSettingGroup:
+    group = RadioSettingGroup('rt950_extra', 'RT-950 Pro Extras')
+    scrambler_value = RadioSettingValueInteger(0, 8, channel.scrambler or 0)
+    scrambler = RadioSetting('scrambler', 'Scrambler Code', scrambler_value)
+    group.append(scrambler)
+    encryption_raw = channel.encryption if channel.encryption is not None else 0
+    encryption_value = RadioSettingValueInteger(0, 3, encryption_raw)
+    encryption = RadioSetting('encryption', 'Encryption Mode', encryption_value)
+    group.append(encryption)
+    return group
+
+
+def _extract_memory_extra(mem) -> Dict[str, int]:
+    extras: Dict[str, int] = {}
+    container = getattr(mem, 'extra', None)
+    if isinstance(container, dict):
+        for key in ('scrambler', 'encryption'):
+            value = container.get(key)
+            if value is not None:
+                extras[key] = value
+        return extras
+    if container is None:
+        return extras
+    if hasattr(container, 'walk'):
+        iterable = list(container.walk())
+    else:
+        try:
+            iterable = list(container)
+        except TypeError:
+            iterable = []
+    for setting in iterable:
+        if not isinstance(setting, RadioSetting):
+            continue
+        value_obj = getattr(setting, 'value', None)
+        if hasattr(value_obj, 'get_value'):
+            raw = value_obj.get_value()
+        else:
+            raw = value_obj
+        extras[setting.get_name()] = raw
+    return extras
+
+
 
 def _build_setting_value(meta, current):
     kind = meta['type']
@@ -728,7 +773,7 @@ class RT950ProRadio(chirp_common.CloneModeRadio):
             mem.mode = "NFM" if channel.bandwidth is Bandwidth.NARROW else "FM"
         mem.power = _POWER_ENUM_TO_CHIRP.get(channel.power, _CHIRP_POWER_LEVELS[0])
         mem.skip = "" if channel.scan_add else "S"
-        mem.extra = {"scrambler": channel.scrambler, "encryption": channel.encryption}
+        mem.extra = _build_memory_extra(channel)
         return mem
 
     def _apply_offset(self, mem, channel: ChannelRecord) -> None:
@@ -806,14 +851,20 @@ class RT950ProRadio(chirp_common.CloneModeRadio):
         channel.name = (mem.name or "").strip()
         self._update_tones_from_memory(mem, channel)
 
-        extras = getattr(mem, "extra", None) or {}
-        scrambler = extras.get("scrambler") if isinstance(extras, dict) else None
-        encryption = extras.get("encryption") if isinstance(extras, dict) else None
-        channel.scrambler = scrambler if isinstance(scrambler, int) else None
-        if channel.scrambler is None or channel.scrambler < 0 or channel.scrambler > 8:
+        extras = _extract_memory_extra(mem)
+        scrambler_raw = extras.get('scrambler', getattr(mem, '_rt950_scrambler', None))
+        encryption_raw = extras.get('encryption', getattr(mem, '_rt950_encryption', None))
+        try:
+            channel.scrambler = int(scrambler_raw)
+        except (TypeError, ValueError):
             channel.scrambler = 0
-        channel.encryption = encryption if isinstance(encryption, int) else None
-        if channel.encryption not in (0, 1):
+        if channel.scrambler < 0 or channel.scrambler > 8:
+            channel.scrambler = 0
+        try:
+            channel.encryption = int(encryption_raw)
+        except (TypeError, ValueError):
+            channel.encryption = 0
+        if channel.encryption not in (0, 1, 2, 3):
             channel.encryption = 0
         channel.learn_fhss = False
         channel.fhss_code = None
