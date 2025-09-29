@@ -21,7 +21,7 @@
 # SOFTWARE.
 #
 
-﻿"""High-level settings API for RT-950 Pro."""
+"""High-level settings API for RT-950 Pro."""
 from __future__ import annotations
 
 from dataclasses import dataclass

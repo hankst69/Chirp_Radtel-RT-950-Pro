@@ -21,7 +21,7 @@
 # SOFTWARE.
 #
 
-﻿"""Channel record parsing for the RT-950 Pro."""
+"""Channel record parsing for the RT-950 Pro."""
 from __future__ import annotations
 
 __all__ = [

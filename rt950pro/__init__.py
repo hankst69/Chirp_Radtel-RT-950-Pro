@@ -1,4 +1,4 @@
-# MIT License
+# IT License
 #
 # Copyright (c) 2025 Nathan G. Barguss - 2E0NBS
 #

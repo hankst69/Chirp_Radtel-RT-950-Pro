@@ -21,7 +21,7 @@
 # SOFTWARE.
 #
 
-﻿"""Serial transport for RT-950 Pro clone operations."""
+"""Serial transport for RT-950 Pro clone operations."""
 from __future__ import annotations
 
 from dataclasses import dataclass

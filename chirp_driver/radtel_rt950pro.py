@@ -61,7 +61,7 @@ import serial
 # SOFTWARE.
 #
 
-﻿"""Channel record parsing for the RT-950 Pro."""
+"""Channel record parsing for the RT-950 Pro."""
 __all__ = [
     "ToneMode",
     "ToneSetting",
@@ -1655,7 +1655,7 @@ def _encode_optional_bounded(value: Optional[object], maximum: int) -> int:
 # SOFTWARE.
 #
 
-﻿"""High-level settings API for RT-950 Pro."""
+"""High-level settings API for RT-950 Pro."""
 
 __all__ = [
     "SettingsError",
@@ -2186,7 +2186,7 @@ rom_bytes."""
 # SOFTWARE.
 #
 
-﻿"""Serial transport for RT-950 Pro clone operations."""
+"""Serial transport for RT-950 Pro clone operations."""
 
 __all__ = [
     "CloneTransportError",
