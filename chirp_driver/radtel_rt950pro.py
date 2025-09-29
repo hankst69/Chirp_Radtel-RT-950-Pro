@@ -800,13 +800,13 @@ class DTMFSettings:
 class ModulationChannelEntry:
     """Single modulation channel entry across FM/AM/SSB."""
 
-    fm_frequency: int
+    fm_frequency: Optional[int]
     fm_name: str
-    am_frequency: int
+    am_frequency: Optional[int]
     am_name: str
-    ssb_frequency: int
-    ssb_bandwidth: int
-    ssb_beat_offset: int
+    ssb_frequency: Optional[int]
+    ssb_bandwidth: Optional[int]
+    ssb_beat_offset: Optional[int]
     ssb_name: str
 
 @dataclass(slots=True)
@@ -1014,16 +1014,24 @@ def parse_modulation_sections(mod_block: bytes, name_block: bytes) -> Modulation
     am_names = [_decode_gb2312(name_block, 256 + idx * 16) for idx in range(16)]
     ssb_names = [_decode_gb2312(name_block, 512 + idx * 16) for idx in range(16)]
 
+    def _scale_freq(value: int) -> Optional[int]:
+        if value in (0, 0xFFFF):
+            return None
+        return value * 10_000
+
     for idx in range(16):
+        fm_freq = _scale_freq(fm_freqs[idx])
+        am_freq = _scale_freq(am_freqs[idx])
+        ssb_freq = _scale_freq(ssb_freqs[idx])
         channels.append(
             ModulationChannelEntry(
-                fm_frequency=fm_freqs[idx],
+                fm_frequency=fm_freq,
                 fm_name=fm_names[idx],
-                am_frequency=am_freqs[idx],
+                am_frequency=am_freq,
                 am_name=am_names[idx],
-                ssb_frequency=ssb_freqs[idx],
-                ssb_bandwidth=ssb_bandwidths[idx],
-                ssb_beat_offset=ssb_offsets[idx],
+                ssb_frequency=ssb_freq,
+                ssb_bandwidth=None if ssb_bandwidths[idx] in (0, 0xFF) else int(ssb_bandwidths[idx]),
+                ssb_beat_offset=ssb_offsets[idx] if ssb_freq is not None else None,
                 ssb_name=ssb_names[idx],
             )
         )
@@ -1325,25 +1333,32 @@ def encode_modulation_sections(
 
     channels = settings.channels[:16]
 
+    def _encode_freq(value: Optional[int]) -> bytes:
+        if value is None or value <= 0:
+            return b'\x00\x00'
+        scaled = max(0, min(0xFFFF, int(round(value / 10_000))))
+        return _encode_le_uint16(scaled)
+
     for idx, channel in enumerate(channels):
         start = idx * 2
-        fm_bytes = _encode_le_uint16(channel.fm_frequency)
+        fm_bytes = _encode_freq(channel.fm_frequency)
         if params[start : start + 2] != fm_bytes:
             params[start : start + 2] = fm_bytes
 
         am_start = 34 + idx * 2
-        am_bytes = _encode_le_uint16(channel.am_frequency)
+        am_bytes = _encode_freq(channel.am_frequency)
         if params[am_start : am_start + 2] != am_bytes:
             params[am_start : am_start + 2] = am_bytes
 
         base = 69 + idx * 5
-        ssb_bytes = _encode_le_uint16(channel.ssb_frequency)
+        ssb_bytes = _encode_freq(channel.ssb_frequency)
         if params[base : base + 2] != ssb_bytes:
             params[base : base + 2] = ssb_bytes
-        bandwidth = channel.ssb_bandwidth & 0xFF
+        bandwidth = 0 if channel.ssb_bandwidth is None else channel.ssb_bandwidth & 0xFF
         if params[base + 2] != bandwidth:
             params[base + 2] = bandwidth
-        beat_bytes = _encode_le_int16(channel.ssb_beat_offset)
+        beat_value = 0 if channel.ssb_beat_offset is None else max(-32768, min(32767, int(channel.ssb_beat_offset)))
+        beat_bytes = _encode_le_int16(beat_value)
         if params[base + 3 : base + 5] != beat_bytes:
             params[base + 3 : base + 5] = beat_bytes
 
@@ -1964,20 +1979,24 @@ CHANNEL_SIZE = 32
 CHANNEL_SECTION_BYTES = CHANNEL_COUNT * CHANNEL_SIZE
 """Total byte length of the channel section within the clone image."""
 
-VFO_SECTION_BYTES = 96
-FUNCTION_SECTION_BYTES = 96
-DTMF_SECTION_BYTES = 384
-MODULATION_SECTION_BYTES = 256
-MODULATION_NAME_SECTION_BYTES = 768
-APRS_SECTION_BYTES = 128
+VFO_DATA_BYTES = 96
+VFO_SEGMENT_BYTES = 0x100
+FUNCTION_DATA_BYTES = 96
+FUNCTION_SEGMENT_BYTES = 0x100
+DTMF_DATA_BYTES = 384
+DTMF_SEGMENT_BYTES = 0x200
+MODULATION_PARAM_DATA_BYTES = 256
+MODULATION_PARAM_SEGMENT_BYTES = 0x200
+MODULATION_NAME_SEGMENT_BYTES = 0x300
+APRS_SEGMENT_BYTES = 0x80
 
-KNOWN_SECTION_BYTES = (
-    VFO_SECTION_BYTES
-    + FUNCTION_SECTION_BYTES
-    + DTMF_SECTION_BYTES
-    + MODULATION_SECTION_BYTES
-    + MODULATION_NAME_SECTION_BYTES
-    + APRS_SECTION_BYTES
+KNOWN_SEGMENT_BYTES = (
+    VFO_SEGMENT_BYTES
+    + FUNCTION_SEGMENT_BYTES
+    + DTMF_SEGMENT_BYTES
+    + MODULATION_PARAM_SEGMENT_BYTES
+    + MODULATION_NAME_SEGMENT_BYTES
+    + APRS_SEGMENT_BYTES
 )
 
 def _chunk(iterable: Sequence[int], size: int) -> Iterable[bytes]:
@@ -2031,37 +2050,40 @@ class RadioImage:
         modulation: Optional[ModulationSettings] = None
         aprs: Optional[APRSSettings] = None
 
-        if len(blob) >= offset + VFO_SECTION_BYTES:
-            vfo_data = bytes(blob[offset : offset + VFO_SECTION_BYTES])
-            vfo = parse_vfo_section(vfo_data)
-        offset += VFO_SECTION_BYTES
+        if len(blob) >= offset + VFO_SEGMENT_BYTES:
+            vfo_segment = bytes(blob[offset : offset + VFO_SEGMENT_BYTES])
+            vfo = parse_vfo_section(vfo_segment[:VFO_DATA_BYTES])
+        offset += VFO_SEGMENT_BYTES
 
-        if len(blob) >= offset + FUNCTION_SECTION_BYTES:
-            function_data = bytes(blob[offset : offset + FUNCTION_SECTION_BYTES])
-            function = parse_function_section(function_data)
-        offset += FUNCTION_SECTION_BYTES
+        if len(blob) >= offset + FUNCTION_SEGMENT_BYTES:
+            function_segment = bytes(blob[offset : offset + FUNCTION_SEGMENT_BYTES])
+            function = parse_function_section(function_segment[:FUNCTION_DATA_BYTES])
+        offset += FUNCTION_SEGMENT_BYTES
 
-        if len(blob) >= offset + DTMF_SECTION_BYTES:
-            dtmf_data = bytes(blob[offset : offset + DTMF_SECTION_BYTES])
-            dtmf = parse_dtmf_section(dtmf_data)
-        offset += DTMF_SECTION_BYTES
+        if len(blob) >= offset + DTMF_SEGMENT_BYTES:
+            dtmf_segment = bytes(blob[offset : offset + DTMF_SEGMENT_BYTES])
+            dtmf = parse_dtmf_section(dtmf_segment[:DTMF_DATA_BYTES])
+        offset += DTMF_SEGMENT_BYTES
 
-        if len(blob) >= offset + MODULATION_SECTION_BYTES + MODULATION_NAME_SECTION_BYTES:
-            mod_params = bytes(blob[offset : offset + MODULATION_SECTION_BYTES])
-            mod_names = bytes(
+        if len(blob) >= offset + MODULATION_PARAM_SEGMENT_BYTES + MODULATION_NAME_SEGMENT_BYTES:
+            params_segment = bytes(blob[offset : offset + MODULATION_PARAM_SEGMENT_BYTES])
+            names_segment = bytes(
                 blob[
                     offset
-                    + MODULATION_SECTION_BYTES : offset
-                    + MODULATION_SECTION_BYTES
-                    + MODULATION_NAME_SECTION_BYTES
+                    + MODULATION_PARAM_SEGMENT_BYTES : offset
+                    + MODULATION_PARAM_SEGMENT_BYTES
+                    + MODULATION_NAME_SEGMENT_BYTES
                 ]
             )
-            modulation = parse_modulation_sections(mod_params, mod_names)
-        offset += MODULATION_SECTION_BYTES + MODULATION_NAME_SECTION_BYTES
+            modulation = parse_modulation_sections(
+                params_segment[:MODULATION_PARAM_DATA_BYTES],
+                names_segment[:MODULATION_NAME_SEGMENT_BYTES],
+            )
+        offset += MODULATION_PARAM_SEGMENT_BYTES + MODULATION_NAME_SEGMENT_BYTES
 
-        if len(blob) >= offset + APRS_SECTION_BYTES:
-            aprs_data = bytes(blob[offset : offset + APRS_SECTION_BYTES])
-            aprs = parse_aprs_section(aprs_data)
+        if len(blob) >= offset + APRS_SEGMENT_BYTES:
+            aprs_data = bytes(blob[offset : offset + APRS_SEGMENT_BYTES])
+            aprs = parse_aprs_section(aprs_data[:APRS_SEGMENT_BYTES])
 
         remainder = bytes(blob[CHANNEL_SECTION_BYTES:])
         return cls(
@@ -2100,39 +2122,50 @@ rom_bytes."""
             )
 
         tail = bytearray(self.remainder)
-        if len(tail) < KNOWN_SECTION_BYTES:
-            tail.extend(b"\xFF" * (KNOWN_SECTION_BYTES - len(tail)))
+        if len(tail) < KNOWN_SEGMENT_BYTES:
+            tail.extend(b"\xFF" * (KNOWN_SEGMENT_BYTES - len(tail)))
 
         offset = 0
 
-        vfo_raw = bytes(tail[offset : offset + VFO_SECTION_BYTES])
-        tail[offset : offset + VFO_SECTION_BYTES] = encode_vfo_section(self.vfo, vfo_raw)
-        offset += VFO_SECTION_BYTES
+        vfo_segment = bytearray(tail[offset : offset + VFO_SEGMENT_BYTES])
+        vfo_encoded = encode_vfo_section(self.vfo, bytes(vfo_segment[:VFO_DATA_BYTES]))
+        vfo_segment[:VFO_DATA_BYTES] = vfo_encoded
+        tail[offset : offset + VFO_SEGMENT_BYTES] = vfo_segment
+        offset += VFO_SEGMENT_BYTES
 
-        function_raw = bytes(tail[offset : offset + FUNCTION_SECTION_BYTES])
-        tail[offset : offset + FUNCTION_SECTION_BYTES] = encode_function_section(
-            self.function, function_raw
+        function_segment = bytearray(tail[offset : offset + FUNCTION_SEGMENT_BYTES])
+        function_encoded = encode_function_section(
+            self.function, bytes(function_segment[:FUNCTION_DATA_BYTES])
         )
-        offset += FUNCTION_SECTION_BYTES
+        function_segment[:FUNCTION_DATA_BYTES] = function_encoded
+        tail[offset : offset + FUNCTION_SEGMENT_BYTES] = function_segment
+        offset += FUNCTION_SEGMENT_BYTES
 
-        dtmf_raw = bytes(tail[offset : offset + DTMF_SECTION_BYTES])
-        tail[offset : offset + DTMF_SECTION_BYTES] = encode_dtmf_section(self.dtmf, dtmf_raw)
-        offset += DTMF_SECTION_BYTES
+        dtmf_segment = bytearray(tail[offset : offset + DTMF_SEGMENT_BYTES])
+        dtmf_encoded = encode_dtmf_section(self.dtmf, bytes(dtmf_segment[:DTMF_DATA_BYTES]))
+        dtmf_segment[:DTMF_DATA_BYTES] = dtmf_encoded
+        tail[offset : offset + DTMF_SEGMENT_BYTES] = dtmf_segment
+        offset += DTMF_SEGMENT_BYTES
 
         params_offset = offset
-        names_offset = params_offset + MODULATION_SECTION_BYTES
+        names_offset = params_offset + MODULATION_PARAM_SEGMENT_BYTES
 
-        params_raw = bytes(tail[params_offset : params_offset + MODULATION_SECTION_BYTES])
-        names_raw = bytes(tail[names_offset : names_offset + MODULATION_NAME_SECTION_BYTES])
+        params_segment = bytearray(tail[params_offset : params_offset + MODULATION_PARAM_SEGMENT_BYTES])
+        names_segment = bytearray(tail[names_offset : names_offset + MODULATION_NAME_SEGMENT_BYTES])
+        params_raw = bytes(params_segment[:MODULATION_PARAM_DATA_BYTES])
+        names_raw = bytes(names_segment[:MODULATION_NAME_SEGMENT_BYTES])
         mod_params, mod_names = encode_modulation_sections(
             self.modulation, params_raw, names_raw
         )
-        tail[params_offset : params_offset + MODULATION_SECTION_BYTES] = mod_params
-        tail[names_offset : names_offset + MODULATION_NAME_SECTION_BYTES] = mod_names
-        offset = names_offset + MODULATION_NAME_SECTION_BYTES
+        params_segment[:MODULATION_PARAM_DATA_BYTES] = mod_params
+        names_segment[:MODULATION_NAME_SEGMENT_BYTES] = mod_names
+        tail[params_offset : params_offset + MODULATION_PARAM_SEGMENT_BYTES] = params_segment
+        tail[names_offset : names_offset + MODULATION_NAME_SEGMENT_BYTES] = names_segment
+        offset = names_offset + MODULATION_NAME_SEGMENT_BYTES
 
-        aprs_raw = bytes(tail[offset : offset + APRS_SECTION_BYTES])
-        tail[offset : offset + APRS_SECTION_BYTES] = encode_aprs_section(self.aprs, aprs_raw)
+        aprs_segment = bytearray(tail[offset : offset + APRS_SEGMENT_BYTES])
+        aprs_encoded = encode_aprs_section(self.aprs, bytes(aprs_segment))
+        tail[offset : offset + APRS_SEGMENT_BYTES] = aprs_encoded
 
         buffer = bytearray(CHANNEL_SECTION_BYTES + len(tail))
         for index, channel in enumerate(self.channels):
@@ -2752,8 +2785,8 @@ _FUNCTION_UI = {
     'auto_backlight': {'label': 'Auto Backlight', 'type': 'int', 'min': 0, 'max': 9},
     'tot': {'label': 'Time-out Timer', 'type': 'int', 'min': 0, 'max': 9},
     'beep_prompt': {'label': 'Key Beep', 'type': 'bool'},
-    'voice_prompt': {'label': 'Voice Prompt', 'type': 'enum', 'choices': [('Off', 0), ('Chinese', 1), ('English', 2)]},
-    'language': {'label': 'Menu Language', 'type': 'enum', 'choices': [('Chinese', 0), ('English', 1), ('Other', 2)]},
+    'voice_prompt': {'label': 'Voice Prompt', 'type': 'enum', 'choices': [('Off', 0), ('English', 1), ('Chinese', 2)]},
+    'language': {'label': 'Menu Language', 'type': 'enum', 'choices': [('English', 0), ('Chinese', 1), ('Other', 2)]},
     'dtmf_mode': {'label': 'DTMF Mode', 'type': 'enum', 'choices': [('Off', 0), ('DT-ST', 1), ('ANI-ID', 2), ('DTMF', 3)]},
     'scan_mode': {'label': 'Scan Mode', 'type': 'enum', 'choices': [('Time', 0), ('Carrier', 1), ('Search', 2)]},
     'ptt_id': {'label': 'PTT ID', 'type': 'enum', 'choices': [('Off', 0), ('BOT', 1), ('EOT', 2), ('Both', 3)]},
@@ -2791,6 +2824,30 @@ _DTMF_ID_MAXLEN = 5
 _DTMF_CODE_MAXLEN = 6
 
 _DTMF_MODE_CHOICES = [('Off', 0), ('BOT', 1), ('EOT', 2), ('Both', 3)]
+
+_VFO_LABELS = ['A', 'B', 'C']
+_VFO_OFFSET_CHOICES = [('Simplex', 0), ('Plus (+)', 1), ('Minus (-)', 2), ('Split', 3)]
+_VFO_BANDWIDTH_CHOICES = [('Narrow', Bandwidth.NARROW), ('Wide', Bandwidth.WIDE)]
+_VFO_MODULATION_CHOICES = [('FM', Modulation.FM), ('AM', Modulation.AM)]
+_VFO_POWER_CHOICES = [('Low', PowerLevel.LOW), ('Medium', PowerLevel.MEDIUM), ('High', PowerLevel.HIGH)]
+_VFO_ENCRYPTION_CHOICES = [('Off', 0), ('Type 1', 1), ('Type 2', 2), ('Type 3', 3)]
+_VFO_BAND_CHOICES = [
+    ('50-76 MHz', 0),
+    ('108-136 MHz', 1),
+    ('137-174 MHz', 2),
+    ('174-350 MHz', 3),
+    ('350-400 MHz', 4),
+    ('400-470 MHz', 5),
+    ('470-600 MHz', 6),
+]
+_VFO_STEP_CHOICES = [
+    ('2.5 kHz', 0),
+    ('5.0 kHz', 1),
+    ('6.25 kHz', 2),
+    ('10.0 kHz', 3),
+    ('12.5 kHz', 4),
+    ('25.0 kHz', 5),
+]
 
 def _build_memory_extra(channel: ChannelRecord) -> RadioSettingGroup:
     group = RadioSettingGroup('rt950_extra', 'RT-950 Pro Extras')
@@ -2831,6 +2888,332 @@ def _extract_memory_extra(mem) -> Dict[str, int]:
             raw = value_obj
         extras[setting.get_name()] = raw
     return extras
+
+def _format_frequency(hz: Optional[int]) -> str:
+    if hz in (None, 0):
+        return ""
+    return chirp_common.format_freq(hz)
+
+def _parse_frequency(text: str) -> Optional[int]:
+    value = text.strip()
+    if not value:
+        return None
+    hz = chirp_common.parse_freq(value)
+    if hz <= 0:
+        raise ValueError("Frequency must be positive")
+    return hz
+
+def _make_bool_setting(name: str, label: str, current: bool, callback, *args) -> RadioSetting:
+    value = RadioSettingValueBoolean(bool(current))
+    setting = RadioSetting(name, label, value)
+    setting.set_apply_callback(callback, *args)
+    return setting
+
+def _make_integer_setting(name: str, label: str, current: Optional[int], minimum: int, maximum: int, callback, *args) -> RadioSetting:
+    active = minimum if current is None else int(current)
+    setting = RadioSetting(name, label, RadioSettingValueInteger(minimum, maximum, active))
+    setting.set_apply_callback(callback, *args)
+    return setting
+
+def _build_vfo_group(vfos: Optional[List[VFOSettings]]) -> RadioSettingGroup:
+    group = RadioSettingGroup('vfo', 'VFO Profiles')
+    if not vfos:
+        return group
+    for idx, vfo in enumerate(vfos):
+        label = _VFO_LABELS[idx] if idx < len(_VFO_LABELS) else str(idx)
+        subgroup = RadioSettingGroup(f'vfo.{idx}', f'VFO {label}')
+
+        freq_value = RadioSettingValueString(0, 12, _format_frequency(vfo.rx_hz) or '', autopad=False)
+        freq_setting = RadioSetting(f'vfo.{idx}.freq', 'RX Frequency', freq_value)
+        freq_setting.set_apply_callback(_apply_vfo_frequency, vfo)
+        subgroup.append(freq_setting)
+
+        offset_labels = [label for label, _ in _VFO_OFFSET_CHOICES]
+        offset_values = [value for _, value in _VFO_OFFSET_CHOICES]
+        offset_index = offset_values.index(vfo.offset_direction) if vfo.offset_direction in offset_values else 0
+        offset_setting = RadioSetting(
+            f'vfo.{idx}.offset_direction',
+            'Offset Direction',
+            RadioSettingValueList(offset_labels, current_index=offset_index),
+        )
+        offset_setting.set_apply_callback(_apply_vfo_offset_direction, vfo)
+        subgroup.append(offset_setting)
+
+        offset_value = RadioSettingValueString(0, 12, _format_frequency(vfo.offset_hz) or '', autopad=False)
+        offset_setting_value = RadioSetting(f'vfo.{idx}.offset', 'Offset Frequency', offset_value)
+        offset_setting_value.set_apply_callback(_apply_vfo_offset, vfo)
+        subgroup.append(offset_setting_value)
+
+        power_labels = [label for label, _ in _VFO_POWER_CHOICES]
+        power_values = [value for _, value in _VFO_POWER_CHOICES]
+        power_index = power_values.index(vfo.tx_power) if vfo.tx_power in power_values else 0
+        power_setting = RadioSetting(
+            f'vfo.{idx}.power',
+            'TX Power',
+            RadioSettingValueList(power_labels, current_index=power_index),
+        )
+        power_setting.set_apply_callback(_apply_vfo_power, vfo)
+        subgroup.append(power_setting)
+
+        bandwidth_labels = [label for label, _ in _VFO_BANDWIDTH_CHOICES]
+        bandwidth_values = [value for _, value in _VFO_BANDWIDTH_CHOICES]
+        bandwidth_index = bandwidth_values.index(vfo.bandwidth) if vfo.bandwidth in bandwidth_values else 0
+        bandwidth_setting = RadioSetting(
+            f'vfo.{idx}.bandwidth',
+            'Bandwidth',
+            RadioSettingValueList(bandwidth_labels, current_index=bandwidth_index),
+        )
+        bandwidth_setting.set_apply_callback(_apply_vfo_bandwidth, vfo)
+        subgroup.append(bandwidth_setting)
+
+        modulation_labels = [label for label, _ in _VFO_MODULATION_CHOICES]
+        modulation_values = [value for _, value in _VFO_MODULATION_CHOICES]
+        modulation_index = modulation_values.index(vfo.rx_modulation) if vfo.rx_modulation in modulation_values else 0
+        modulation_setting = RadioSetting(
+            f'vfo.{idx}.modulation',
+            'RX Modulation',
+            RadioSettingValueList(modulation_labels, current_index=modulation_index),
+        )
+        modulation_setting.set_apply_callback(_apply_vfo_modulation, vfo)
+        subgroup.append(modulation_setting)
+
+        subgroup.append(_make_bool_setting(f'vfo.{idx}.busy_lockout', 'Busy Lockout', vfo.busy_lockout, _apply_vfo_busy_lockout, vfo))
+        subgroup.append(_make_bool_setting(f'vfo.{idx}.fhss', 'Learn FHSS', vfo.learn_fhss, _apply_vfo_learn_fhss, vfo))
+
+        scrambler_setting = RadioSetting(
+            f'vfo.{idx}.scrambler',
+            'Scrambler Code',
+            RadioSettingValueInteger(0, 9, int(vfo.scrambler)),
+        )
+        scrambler_setting.set_apply_callback(_apply_vfo_scrambler, vfo)
+        subgroup.append(scrambler_setting)
+
+        encryption_labels = [label for label, _ in _VFO_ENCRYPTION_CHOICES]
+        encryption_values = [value for _, value in _VFO_ENCRYPTION_CHOICES]
+        encryption_index = encryption_values.index(vfo.encryption) if vfo.encryption in encryption_values else 0
+        encryption_setting = RadioSetting(
+            f'vfo.{idx}.encryption',
+            'Encryption Mode',
+            RadioSettingValueList(encryption_labels, current_index=encryption_index),
+        )
+        encryption_setting.set_apply_callback(_apply_vfo_encryption, vfo)
+        subgroup.append(encryption_setting)
+
+        step_labels = [label for label, _ in _VFO_STEP_CHOICES]
+        step_values = [value for _, value in _VFO_STEP_CHOICES]
+        step_index = step_values.index(vfo.step_freq_index) if vfo.step_freq_index in step_values else 0
+        step_setting = RadioSetting(
+            f'vfo.{idx}.step',
+            'Step Size',
+            RadioSettingValueList(step_labels, current_index=step_index),
+        )
+        step_setting.set_apply_callback(_apply_vfo_step, vfo)
+        subgroup.append(step_setting)
+
+        band_labels = [label for label, _ in _VFO_BAND_CHOICES]
+        band_values = [value for _, value in _VFO_BAND_CHOICES]
+        band_index = band_values.index(vfo.freq_band) if vfo.freq_band in band_values else 0
+        freq_band_setting = RadioSetting(
+            f'vfo.{idx}.freq_band',
+            'Frequency Band',
+            RadioSettingValueList(band_labels, current_index=band_index),
+        )
+        freq_band_setting.set_apply_callback(_apply_vfo_freq_band, vfo)
+        subgroup.append(freq_band_setting)
+
+        signalling_setting = RadioSetting(
+            f'vfo.{idx}.signalling_group',
+            'Signalling Group',
+            RadioSettingValueInteger(0, 15, int(vfo.signalling_group)),
+        )
+        signalling_setting.set_apply_callback(_apply_vfo_signalling, vfo)
+        subgroup.append(signalling_setting)
+
+        group.append(subgroup)
+    return group
+
+def _build_modulation_group(modulation: ModulationSettings) -> RadioSettingGroup:
+    group = RadioSettingGroup('modulation', 'Broadcast/Modulation')
+    global_group = RadioSettingGroup('modulation.global', 'Global Settings')
+    global_group.append(_make_integer_setting('modulation.fm_current_channel', 'FM Current Channel', modulation.fm_current_channel, 0, 15, _apply_modulation_int, modulation, 'fm_current_channel'))
+    global_group.append(_make_integer_setting('modulation.am_current_channel', 'AM Current Channel', modulation.am_current_channel, 0, 15, _apply_modulation_int, modulation, 'am_current_channel'))
+    global_group.append(_make_integer_setting('modulation.ssb_current_channel', 'SSB Current Channel', modulation.ssb_current_channel, 0, 15, _apply_modulation_int, modulation, 'ssb_current_channel'))
+    global_group.append(_make_integer_setting('modulation.work_mode', 'Work Mode', modulation.work_mode, 0, 3, _apply_modulation_int, modulation, 'work_mode'))
+    global_group.append(_make_integer_setting('modulation.modulation_mode', 'Modulation Mode', modulation.modulation_mode, 0, 5, _apply_modulation_int, modulation, 'modulation_mode'))
+    global_group.append(_make_integer_setting('modulation.am_step', 'AM Step Index', modulation.am_step_index, 0, 7, _apply_modulation_int, modulation, 'am_step_index'))
+    global_group.append(_make_integer_setting('modulation.am_rx_gain', 'AM RX Gain', modulation.am_rx_gain, 0, 255, _apply_modulation_int, modulation, 'am_rx_gain'))
+    global_group.append(_make_integer_setting('modulation.ssb_step', 'SSB Step Index', modulation.ssb_step_index, 0, 7, _apply_modulation_int, modulation, 'ssb_step_index'))
+    global_group.append(_make_integer_setting('modulation.ssb_rx_gain', 'SSB RX Gain', modulation.ssb_rx_gain, 0, 255, _apply_modulation_int, modulation, 'ssb_rx_gain'))
+    group.append(global_group)
+
+    if modulation.channels:
+        group.append(_build_modulation_channel_group('modulation.fm_channels', 'FM Broadcast Channels', modulation, 'fm'))
+        group.append(_build_modulation_channel_group('modulation.am_channels', 'AM Broadcast Channels', modulation, 'am'))
+        group.append(_build_modulation_channel_group('modulation.ssb_channels', 'SSB Channels', modulation, 'ssb'))
+    return group
+
+def _build_modulation_channel_group(name_prefix: str, label: str, modulation: ModulationSettings, mode: str) -> RadioSettingGroup:
+    subgroup = RadioSettingGroup(name_prefix, label)
+    for idx, channel in enumerate(modulation.channels):
+        channel_group = RadioSettingGroup(f'{name_prefix}.{idx}', f'Channel {idx + 1}')
+        if mode == 'fm':
+            freq_setting = RadioSetting(
+                f'{name_prefix}.{idx}.freq',
+                'Frequency',
+                RadioSettingValueString(0, 12, _format_frequency(channel.fm_frequency) or '', autopad=False),
+            )
+            freq_setting.set_apply_callback(_apply_modulation_channel_frequency, modulation, idx, 'fm_frequency')
+            channel_group.append(freq_setting)
+            name_setting = RadioSetting(
+                f'{name_prefix}.{idx}.name',
+                'Name',
+                RadioSettingValueString(0, 16, channel.fm_name or '', autopad=False),
+            )
+            name_setting.set_apply_callback(_apply_modulation_channel_name, modulation, idx, 'fm_name')
+            channel_group.append(name_setting)
+        elif mode == 'am':
+            freq_setting = RadioSetting(
+                f'{name_prefix}.{idx}.freq',
+                'Frequency',
+                RadioSettingValueString(0, 12, _format_frequency(channel.am_frequency) or '', autopad=False),
+            )
+            freq_setting.set_apply_callback(_apply_modulation_channel_frequency, modulation, idx, 'am_frequency')
+            channel_group.append(freq_setting)
+            name_setting = RadioSetting(
+                f'{name_prefix}.{idx}.name',
+                'Name',
+                RadioSettingValueString(0, 16, channel.am_name or '', autopad=False),
+            )
+            name_setting.set_apply_callback(_apply_modulation_channel_name, modulation, idx, 'am_name')
+            channel_group.append(name_setting)
+        elif mode == 'ssb':
+            freq_setting = RadioSetting(
+                f'{name_prefix}.{idx}.freq',
+                'Frequency',
+                RadioSettingValueString(0, 12, _format_frequency(channel.ssb_frequency) or '', autopad=False),
+            )
+            freq_setting.set_apply_callback(_apply_modulation_channel_frequency, modulation, idx, 'ssb_frequency')
+            channel_group.append(freq_setting)
+            bandwidth_setting = _make_integer_setting(
+                f'{name_prefix}.{idx}.bandwidth',
+                'Bandwidth',
+                channel.ssb_bandwidth,
+                0,
+                255,
+                _apply_modulation_channel_int,
+                modulation,
+                idx,
+                'ssb_bandwidth'
+            )
+            channel_group.append(bandwidth_setting)
+            beat_setting = RadioSetting(
+                f'{name_prefix}.{idx}.beat',
+                'Beat Offset',
+                RadioSettingValueInteger(-32768, 32767, int(channel.ssb_beat_offset or 0)),
+            )
+            beat_setting.set_apply_callback(_apply_modulation_channel_beat, modulation, idx)
+            channel_group.append(beat_setting)
+            name_setting = RadioSetting(
+                f'{name_prefix}.{idx}.name',
+                'Name',
+                RadioSettingValueString(0, 16, channel.ssb_name or '', autopad=False),
+            )
+            name_setting.set_apply_callback(_apply_modulation_channel_name, modulation, idx, 'ssb_name')
+            channel_group.append(name_setting)
+        subgroup.append(channel_group)
+    return subgroup
+
+def _apply_modulation_int(rsetting, modulation, attr):
+    setattr(modulation, attr, max(0, _value_as_int(rsetting.value)))
+
+def _apply_modulation_channel_frequency(rsetting, modulation, index, attr):
+    try:
+        value = _value_as_string(rsetting.value).strip()
+    except AttributeError:
+        value = str(rsetting.value).strip()
+    freq = _parse_frequency(value) if value else None
+    setattr(modulation.channels[index], attr, freq)
+
+def _apply_modulation_channel_name(rsetting, modulation, index, attr):
+    name = _value_as_string(rsetting.value)
+    setattr(modulation.channels[index], attr, name)
+
+def _apply_modulation_channel_int(rsetting, modulation, index, attr):
+    value = max(0, _value_as_int(rsetting.value))
+    setattr(modulation.channels[index], attr, value)
+
+def _apply_modulation_channel_beat(rsetting, modulation, index):
+    value = _value_as_int(rsetting.value)
+    if value < -32768:
+        value = -32768
+    elif value > 32767:
+        value = 32767
+    modulation.channels[index].ssb_beat_offset = value
+
+def _apply_vfo_frequency(rsetting, vfo):
+    try:
+        value = _value_as_string(rsetting.value).strip()
+    except AttributeError:
+        value = str(rsetting.value).strip()
+    if not value:
+        vfo.rx_hz = None
+        return
+    try:
+        vfo.rx_hz = _parse_frequency(value)
+    except ValueError as exc:
+        raise errors.RadioError(str(exc)) from exc
+
+def _apply_vfo_offset_direction(rsetting, vfo):
+    index = _value_as_index(rsetting.value, _VFO_OFFSET_CHOICES)
+    vfo.offset_direction = _VFO_OFFSET_CHOICES[index][1]
+
+def _apply_vfo_offset(rsetting, vfo):
+    try:
+        value = _value_as_string(rsetting.value).strip()
+    except AttributeError:
+        value = str(rsetting.value).strip()
+    if not value:
+        vfo.offset_hz = None
+        return
+    try:
+        vfo.offset_hz = _parse_frequency(value)
+    except ValueError as exc:
+        raise errors.RadioError(str(exc)) from exc
+
+def _apply_vfo_power(rsetting, vfo):
+    index = _value_as_index(rsetting.value, _VFO_POWER_CHOICES)
+    vfo.tx_power = _VFO_POWER_CHOICES[index][1]
+
+def _apply_vfo_bandwidth(rsetting, vfo):
+    index = _value_as_index(rsetting.value, _VFO_BANDWIDTH_CHOICES)
+    vfo.bandwidth = _VFO_BANDWIDTH_CHOICES[index][1]
+
+def _apply_vfo_modulation(rsetting, vfo):
+    index = _value_as_index(rsetting.value, _VFO_MODULATION_CHOICES)
+    vfo.rx_modulation = _VFO_MODULATION_CHOICES[index][1]
+
+def _apply_vfo_busy_lockout(rsetting, vfo):
+    vfo.busy_lockout = bool(_value_as_bool(rsetting.value))
+
+def _apply_vfo_learn_fhss(rsetting, vfo):
+    vfo.learn_fhss = bool(_value_as_bool(rsetting.value))
+
+def _apply_vfo_scrambler(rsetting, vfo):
+    vfo.scrambler = max(0, _value_as_int(rsetting.value)) & 0x0F
+
+def _apply_vfo_encryption(rsetting, vfo):
+    index = _value_as_index(rsetting.value, _VFO_ENCRYPTION_CHOICES)
+    vfo.encryption = _VFO_ENCRYPTION_CHOICES[index][1]
+
+def _apply_vfo_step(rsetting, vfo):
+    index = _value_as_index(rsetting.value, _VFO_STEP_CHOICES)
+    vfo.step_freq_index = _VFO_STEP_CHOICES[index][1]
+
+def _apply_vfo_freq_band(rsetting, vfo):
+    vfo.freq_band = max(0, _value_as_int(rsetting.value)) & 0x0F
+
+def _apply_vfo_signalling(rsetting, vfo):
+    vfo.signalling_group = max(0, _value_as_int(rsetting.value)) & 0x0F
 
 def _build_setting_value(meta, current):
     kind = meta['type']
@@ -3059,6 +3442,7 @@ class RT950ProRadio(chirp_common.CloneModeRadio):
         ]
         rf.has_bank = False
         rf.has_bank_names = False
+        rf.has_settings = True
         rf.has_name = True
         rf.has_ctone = True
         rf.has_dtcs = True
@@ -3131,6 +3515,10 @@ class RT950ProRadio(chirp_common.CloneModeRadio):
     def get_settings(self):  # type: ignore[override]
         image = self._require_image()
         groups = []
+        if getattr(image, 'vfo', None):
+            groups.append(_build_vfo_group(image.vfo))
+        if getattr(image, 'modulation', None) is not None:
+            groups.append(_build_modulation_group(image.modulation))
         if getattr(image, 'function', None) is not None:
             groups.append(_build_function_group(image.function))
         if getattr(image, 'aprs', None) is not None:

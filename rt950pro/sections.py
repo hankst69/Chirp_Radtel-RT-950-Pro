@@ -115,13 +115,13 @@ class DTMFSettings:
 class ModulationChannelEntry:
     """Single modulation channel entry across FM/AM/SSB."""
 
-    fm_frequency: int
+    fm_frequency: Optional[int]
     fm_name: str
-    am_frequency: int
+    am_frequency: Optional[int]
     am_name: str
-    ssb_frequency: int
-    ssb_bandwidth: int
-    ssb_beat_offset: int
+    ssb_frequency: Optional[int]
+    ssb_bandwidth: Optional[int]
+    ssb_beat_offset: Optional[int]
     ssb_name: str
 
 
@@ -339,16 +339,24 @@ def parse_modulation_sections(mod_block: bytes, name_block: bytes) -> Modulation
     am_names = [_decode_gb2312(name_block, 256 + idx * 16) for idx in range(16)]
     ssb_names = [_decode_gb2312(name_block, 512 + idx * 16) for idx in range(16)]
 
+    def _scale_freq(value: int) -> Optional[int]:
+        if value in (0, 0xFFFF):
+            return None
+        return value * 10_000
+
     for idx in range(16):
+        fm_freq = _scale_freq(fm_freqs[idx])
+        am_freq = _scale_freq(am_freqs[idx])
+        ssb_freq = _scale_freq(ssb_freqs[idx])
         channels.append(
             ModulationChannelEntry(
-                fm_frequency=fm_freqs[idx],
+                fm_frequency=fm_freq,
                 fm_name=fm_names[idx],
-                am_frequency=am_freqs[idx],
+                am_frequency=am_freq,
                 am_name=am_names[idx],
-                ssb_frequency=ssb_freqs[idx],
-                ssb_bandwidth=ssb_bandwidths[idx],
-                ssb_beat_offset=ssb_offsets[idx],
+                ssb_frequency=ssb_freq,
+                ssb_bandwidth=None if ssb_bandwidths[idx] in (0, 0xFF) else int(ssb_bandwidths[idx]),
+                ssb_beat_offset=ssb_offsets[idx] if ssb_freq is not None else None,
                 ssb_name=ssb_names[idx],
             )
         )
@@ -658,25 +666,32 @@ def encode_modulation_sections(
 
     channels = settings.channels[:16]
 
+    def _encode_freq(value: Optional[int]) -> bytes:
+        if value is None or value <= 0:
+            return b'\x00\x00'
+        scaled = max(0, min(0xFFFF, int(round(value / 10_000))))
+        return _encode_le_uint16(scaled)
+
     for idx, channel in enumerate(channels):
         start = idx * 2
-        fm_bytes = _encode_le_uint16(channel.fm_frequency)
+        fm_bytes = _encode_freq(channel.fm_frequency)
         if params[start : start + 2] != fm_bytes:
             params[start : start + 2] = fm_bytes
 
         am_start = 34 + idx * 2
-        am_bytes = _encode_le_uint16(channel.am_frequency)
+        am_bytes = _encode_freq(channel.am_frequency)
         if params[am_start : am_start + 2] != am_bytes:
             params[am_start : am_start + 2] = am_bytes
 
         base = 69 + idx * 5
-        ssb_bytes = _encode_le_uint16(channel.ssb_frequency)
+        ssb_bytes = _encode_freq(channel.ssb_frequency)
         if params[base : base + 2] != ssb_bytes:
             params[base : base + 2] = ssb_bytes
-        bandwidth = channel.ssb_bandwidth & 0xFF
+        bandwidth = 0 if channel.ssb_bandwidth is None else channel.ssb_bandwidth & 0xFF
         if params[base + 2] != bandwidth:
             params[base + 2] = bandwidth
-        beat_bytes = _encode_le_int16(channel.ssb_beat_offset)
+        beat_value = 0 if channel.ssb_beat_offset is None else max(-32768, min(32767, int(channel.ssb_beat_offset)))
+        beat_bytes = _encode_le_int16(beat_value)
         if params[base + 3 : base + 5] != beat_bytes:
             params[base + 3 : base + 5] = beat_bytes
 

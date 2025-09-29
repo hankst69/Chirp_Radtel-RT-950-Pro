@@ -1,4 +1,4 @@
-# IT License
+# MIT License
 #
 # Copyright (c) 2025 Nathan G. Barguss - 2E0NBS
 #
@@ -21,7 +21,7 @@
 # SOFTWARE.
 #
 
-﻿"""RT-950 Pro utility package."""
+"""RT-950 Pro utility package."""
 from __future__ import annotations
 
 from .channel import (

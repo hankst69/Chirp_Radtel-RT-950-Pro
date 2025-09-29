@@ -67,20 +67,24 @@ CHANNEL_SIZE = 32
 CHANNEL_SECTION_BYTES = CHANNEL_COUNT * CHANNEL_SIZE
 """Total byte length of the channel section within the clone image."""
 
-VFO_SECTION_BYTES = 96
-FUNCTION_SECTION_BYTES = 96
-DTMF_SECTION_BYTES = 384
-MODULATION_SECTION_BYTES = 256
-MODULATION_NAME_SECTION_BYTES = 768
-APRS_SECTION_BYTES = 128
+VFO_DATA_BYTES = 96
+VFO_SEGMENT_BYTES = 0x100
+FUNCTION_DATA_BYTES = 96
+FUNCTION_SEGMENT_BYTES = 0x100
+DTMF_DATA_BYTES = 384
+DTMF_SEGMENT_BYTES = 0x200
+MODULATION_PARAM_DATA_BYTES = 256
+MODULATION_PARAM_SEGMENT_BYTES = 0x200
+MODULATION_NAME_SEGMENT_BYTES = 0x300
+APRS_SEGMENT_BYTES = 0x80
 
-KNOWN_SECTION_BYTES = (
-    VFO_SECTION_BYTES
-    + FUNCTION_SECTION_BYTES
-    + DTMF_SECTION_BYTES
-    + MODULATION_SECTION_BYTES
-    + MODULATION_NAME_SECTION_BYTES
-    + APRS_SECTION_BYTES
+KNOWN_SEGMENT_BYTES = (
+    VFO_SEGMENT_BYTES
+    + FUNCTION_SEGMENT_BYTES
+    + DTMF_SEGMENT_BYTES
+    + MODULATION_PARAM_SEGMENT_BYTES
+    + MODULATION_NAME_SEGMENT_BYTES
+    + APRS_SEGMENT_BYTES
 )
 
 
@@ -136,37 +140,40 @@ class RadioImage:
         modulation: Optional[ModulationSettings] = None
         aprs: Optional[APRSSettings] = None
 
-        if len(blob) >= offset + VFO_SECTION_BYTES:
-            vfo_data = bytes(blob[offset : offset + VFO_SECTION_BYTES])
-            vfo = parse_vfo_section(vfo_data)
-        offset += VFO_SECTION_BYTES
+        if len(blob) >= offset + VFO_SEGMENT_BYTES:
+            vfo_segment = bytes(blob[offset : offset + VFO_SEGMENT_BYTES])
+            vfo = parse_vfo_section(vfo_segment[:VFO_DATA_BYTES])
+        offset += VFO_SEGMENT_BYTES
 
-        if len(blob) >= offset + FUNCTION_SECTION_BYTES:
-            function_data = bytes(blob[offset : offset + FUNCTION_SECTION_BYTES])
-            function = parse_function_section(function_data)
-        offset += FUNCTION_SECTION_BYTES
+        if len(blob) >= offset + FUNCTION_SEGMENT_BYTES:
+            function_segment = bytes(blob[offset : offset + FUNCTION_SEGMENT_BYTES])
+            function = parse_function_section(function_segment[:FUNCTION_DATA_BYTES])
+        offset += FUNCTION_SEGMENT_BYTES
 
-        if len(blob) >= offset + DTMF_SECTION_BYTES:
-            dtmf_data = bytes(blob[offset : offset + DTMF_SECTION_BYTES])
-            dtmf = parse_dtmf_section(dtmf_data)
-        offset += DTMF_SECTION_BYTES
+        if len(blob) >= offset + DTMF_SEGMENT_BYTES:
+            dtmf_segment = bytes(blob[offset : offset + DTMF_SEGMENT_BYTES])
+            dtmf = parse_dtmf_section(dtmf_segment[:DTMF_DATA_BYTES])
+        offset += DTMF_SEGMENT_BYTES
 
-        if len(blob) >= offset + MODULATION_SECTION_BYTES + MODULATION_NAME_SECTION_BYTES:
-            mod_params = bytes(blob[offset : offset + MODULATION_SECTION_BYTES])
-            mod_names = bytes(
+        if len(blob) >= offset + MODULATION_PARAM_SEGMENT_BYTES + MODULATION_NAME_SEGMENT_BYTES:
+            params_segment = bytes(blob[offset : offset + MODULATION_PARAM_SEGMENT_BYTES])
+            names_segment = bytes(
                 blob[
                     offset
-                    + MODULATION_SECTION_BYTES : offset
-                    + MODULATION_SECTION_BYTES
-                    + MODULATION_NAME_SECTION_BYTES
+                    + MODULATION_PARAM_SEGMENT_BYTES : offset
+                    + MODULATION_PARAM_SEGMENT_BYTES
+                    + MODULATION_NAME_SEGMENT_BYTES
                 ]
             )
-            modulation = parse_modulation_sections(mod_params, mod_names)
-        offset += MODULATION_SECTION_BYTES + MODULATION_NAME_SECTION_BYTES
+            modulation = parse_modulation_sections(
+                params_segment[:MODULATION_PARAM_DATA_BYTES],
+                names_segment[:MODULATION_NAME_SEGMENT_BYTES],
+            )
+        offset += MODULATION_PARAM_SEGMENT_BYTES + MODULATION_NAME_SEGMENT_BYTES
 
-        if len(blob) >= offset + APRS_SECTION_BYTES:
-            aprs_data = bytes(blob[offset : offset + APRS_SECTION_BYTES])
-            aprs = parse_aprs_section(aprs_data)
+        if len(blob) >= offset + APRS_SEGMENT_BYTES:
+            aprs_data = bytes(blob[offset : offset + APRS_SEGMENT_BYTES])
+            aprs = parse_aprs_section(aprs_data[:APRS_SEGMENT_BYTES])
 
         remainder = bytes(blob[CHANNEL_SECTION_BYTES:])
         return cls(
@@ -204,39 +211,50 @@ class RadioImage:
             )
 
         tail = bytearray(self.remainder)
-        if len(tail) < KNOWN_SECTION_BYTES:
-            tail.extend(b"\xFF" * (KNOWN_SECTION_BYTES - len(tail)))
+        if len(tail) < KNOWN_SEGMENT_BYTES:
+            tail.extend(b"\xFF" * (KNOWN_SEGMENT_BYTES - len(tail)))
 
         offset = 0
 
-        vfo_raw = bytes(tail[offset : offset + VFO_SECTION_BYTES])
-        tail[offset : offset + VFO_SECTION_BYTES] = encode_vfo_section(self.vfo, vfo_raw)
-        offset += VFO_SECTION_BYTES
+        vfo_segment = bytearray(tail[offset : offset + VFO_SEGMENT_BYTES])
+        vfo_encoded = encode_vfo_section(self.vfo, bytes(vfo_segment[:VFO_DATA_BYTES]))
+        vfo_segment[:VFO_DATA_BYTES] = vfo_encoded
+        tail[offset : offset + VFO_SEGMENT_BYTES] = vfo_segment
+        offset += VFO_SEGMENT_BYTES
 
-        function_raw = bytes(tail[offset : offset + FUNCTION_SECTION_BYTES])
-        tail[offset : offset + FUNCTION_SECTION_BYTES] = encode_function_section(
-            self.function, function_raw
+        function_segment = bytearray(tail[offset : offset + FUNCTION_SEGMENT_BYTES])
+        function_encoded = encode_function_section(
+            self.function, bytes(function_segment[:FUNCTION_DATA_BYTES])
         )
-        offset += FUNCTION_SECTION_BYTES
+        function_segment[:FUNCTION_DATA_BYTES] = function_encoded
+        tail[offset : offset + FUNCTION_SEGMENT_BYTES] = function_segment
+        offset += FUNCTION_SEGMENT_BYTES
 
-        dtmf_raw = bytes(tail[offset : offset + DTMF_SECTION_BYTES])
-        tail[offset : offset + DTMF_SECTION_BYTES] = encode_dtmf_section(self.dtmf, dtmf_raw)
-        offset += DTMF_SECTION_BYTES
+        dtmf_segment = bytearray(tail[offset : offset + DTMF_SEGMENT_BYTES])
+        dtmf_encoded = encode_dtmf_section(self.dtmf, bytes(dtmf_segment[:DTMF_DATA_BYTES]))
+        dtmf_segment[:DTMF_DATA_BYTES] = dtmf_encoded
+        tail[offset : offset + DTMF_SEGMENT_BYTES] = dtmf_segment
+        offset += DTMF_SEGMENT_BYTES
 
         params_offset = offset
-        names_offset = params_offset + MODULATION_SECTION_BYTES
+        names_offset = params_offset + MODULATION_PARAM_SEGMENT_BYTES
 
-        params_raw = bytes(tail[params_offset : params_offset + MODULATION_SECTION_BYTES])
-        names_raw = bytes(tail[names_offset : names_offset + MODULATION_NAME_SECTION_BYTES])
+        params_segment = bytearray(tail[params_offset : params_offset + MODULATION_PARAM_SEGMENT_BYTES])
+        names_segment = bytearray(tail[names_offset : names_offset + MODULATION_NAME_SEGMENT_BYTES])
+        params_raw = bytes(params_segment[:MODULATION_PARAM_DATA_BYTES])
+        names_raw = bytes(names_segment[:MODULATION_NAME_SEGMENT_BYTES])
         mod_params, mod_names = encode_modulation_sections(
             self.modulation, params_raw, names_raw
         )
-        tail[params_offset : params_offset + MODULATION_SECTION_BYTES] = mod_params
-        tail[names_offset : names_offset + MODULATION_NAME_SECTION_BYTES] = mod_names
-        offset = names_offset + MODULATION_NAME_SECTION_BYTES
+        params_segment[:MODULATION_PARAM_DATA_BYTES] = mod_params
+        names_segment[:MODULATION_NAME_SEGMENT_BYTES] = mod_names
+        tail[params_offset : params_offset + MODULATION_PARAM_SEGMENT_BYTES] = params_segment
+        tail[names_offset : names_offset + MODULATION_NAME_SEGMENT_BYTES] = names_segment
+        offset = names_offset + MODULATION_NAME_SEGMENT_BYTES
 
-        aprs_raw = bytes(tail[offset : offset + APRS_SECTION_BYTES])
-        tail[offset : offset + APRS_SECTION_BYTES] = encode_aprs_section(self.aprs, aprs_raw)
+        aprs_segment = bytearray(tail[offset : offset + APRS_SEGMENT_BYTES])
+        aprs_encoded = encode_aprs_section(self.aprs, bytes(aprs_segment))
+        tail[offset : offset + APRS_SEGMENT_BYTES] = aprs_encoded
 
         buffer = bytearray(CHANNEL_SECTION_BYTES + len(tail))
         for index, channel in enumerate(self.channels):
@@ -266,3 +284,4 @@ class RadioImage:
             path.write_bytes(data)
         except OSError as exc:
             raise ValueError(f"Unable to write image file {path}: {exc}") from exc
+

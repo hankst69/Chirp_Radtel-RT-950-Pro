@@ -320,16 +320,21 @@ def _convert_modulation_section(modulation_data) -> Optional[ModulationSettings]
     if modulation_data is None:
         return None
     channels: List[ModulationChannelEntry] = []
+    def _scale_mod_freq(value):
+        if value in (None, 0):
+            return None
+        return int(value) * 10_000
+
     for channel in getattr(modulation_data, "ModulationChannels", []):
         channels.append(
             ModulationChannelEntry(
-                fm_frequency=_to_int(getattr(channel, "FMFreq", 0), allow_none=True) or 0,
+                fm_frequency=_scale_mod_freq(_to_int(getattr(channel, "FMFreq", 0), allow_none=True)),
                 fm_name=_strip(getattr(channel, "FMName", "")),
-                am_frequency=_to_int(getattr(channel, "AMFreq", 0), allow_none=True) or 0,
+                am_frequency=_scale_mod_freq(_to_int(getattr(channel, "AMFreq", 0), allow_none=True)),
                 am_name=_strip(getattr(channel, "AMName", "")),
-                ssb_frequency=_to_int(getattr(channel, "SSBFreq", 0), allow_none=True) or 0,
-                ssb_bandwidth=_to_int(getattr(channel, "SSBBandwidth", 0), allow_none=True) or 0,
-                ssb_beat_offset=_to_int(getattr(channel, "SSBBeatFreqOffset", 0), allow_none=True) or 0,
+                ssb_frequency=_scale_mod_freq(_to_int(getattr(channel, "SSBFreq", 0), allow_none=True)),
+                ssb_bandwidth=_to_int(getattr(channel, "SSBBandwidth", 0), allow_none=True),
+                ssb_beat_offset=_to_int(getattr(channel, "SSBBeatFreqOffset", 0), allow_none=True),
                 ssb_name=_strip(getattr(channel, "SSBName", "")),
             )
         )
