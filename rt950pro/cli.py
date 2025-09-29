@@ -8,9 +8,15 @@ from typing import Optional, Sequence
 
 from .channel import ChannelRecord
 from .dat_loader import CPSLoaderError, load_cps_radio
-from .image import RadioImage
+from .image import CHANNEL_SECTION_BYTES, RadioImage
 from .logging import configure_logging, log_mock_warning
-from .regression import ComparisonError, compare_dat_to_csv
+from .regression import ComparisonError, ComparisonResult, Difference, compare_dat_to_csv
+from .transport import (
+    CloneSerialConfig,
+    CloneSerialTransport,
+    CloneTransportError,
+    DEFAULT_SEGMENTS,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -52,6 +58,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     image_parser = subparsers.add_parser("image", help="Radio image utilities")
     image_sub = image_parser.add_subparsers(dest="image_command")
+
+    clone_read_parser = image_sub.add_parser("clone-read", help="Read a clone dump over serial")
+    clone_read_parser.add_argument("--port", required=True, help="Serial port presented by the radio")
+    clone_read_parser.add_argument("--baud", type=int, default=115200, help="Clone baud rate (default: 115200)")
+    clone_read_parser.add_argument("--timeout", type=float, default=1.0, help="Serial read timeout in seconds (default: 1.0)")
+    clone_read_parser.add_argument("--write-timeout", type=float, default=1.0, help="Serial write timeout in seconds (default: 1.0)")
+    clone_read_parser.add_argument("--output", type=Path, default=Path("rt950pro_clone.bin"), help="Output file for the decrypted clone image")
+
+    clone_write_parser = image_sub.add_parser("clone-write", help="Write a clone image to the radio")
+    clone_write_parser.add_argument("--port", required=True, help="Serial port presented by the radio")
+    clone_write_parser.add_argument("--input", type=Path, required=True, help="Path to the decoded clone image")
+    clone_write_parser.add_argument("--baud", type=int, default=115200, help="Clone baud rate (default: 115200)")
+    clone_write_parser.add_argument("--timeout", type=float, default=1.0, help="Serial read timeout in seconds (default: 1.0)")
+    clone_write_parser.add_argument("--write-timeout", type=float, default=1.0, help="Serial write timeout in seconds (default: 1.0)")
 
     summary_parser = image_sub.add_parser("summary", help="Summarise a raw clone image")
     summary_parser.add_argument("input", help="Path to a raw clone image dump")
@@ -118,6 +138,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             log_mock_warning(logger, "channel encode command")
             return 2
     elif args.command == "image":
+        if args.image_command == "clone-read":
+            return _cmd_image_clone_read(
+                port=args.port,
+                baud=args.baud,
+                timeout=args.timeout,
+                write_timeout=args.write_timeout,
+                output=args.output,
+                logger=logger,
+            )
+        if args.image_command == "clone-write":
+            return _cmd_image_clone_write(
+                input_path=args.input,
+                port=args.port,
+                baud=args.baud,
+                timeout=args.timeout,
+                write_timeout=args.write_timeout,
+                logger=logger,
+            )
         if args.image_command == "summary":
             return _cmd_image_summary(Path(args.input), limit=args.limit, logger=logger)
         if args.image_command == "dat-summary":
@@ -129,6 +167,72 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_regression_dat_csv(Path(args.dat), Path(args.csv), assembly=assembly, limit=args.limit, logger=logger)
     parser.print_help()
     return 1
+
+
+def _cmd_image_clone_write(*, input_path: Path, port: str, baud: int, timeout: float, write_timeout: float, logger) -> int:
+    """Write a clone image to the radio over serial."""
+
+    expected_length = sum(segment.length for segment in DEFAULT_SEGMENTS)
+    try:
+        raw_data = input_path.read_bytes()
+    except OSError as exc:
+        logger.error("Unable to read image file %s: %s", input_path, exc)
+        return 2
+
+    if len(raw_data) != expected_length:
+        logger.error("Input size %s bytes does not match expected clone length %s; refusing to write", len(raw_data), expected_length)
+        logger.error("Use a raw clone dump produced by this tool or a CPS read")
+        return 2
+    payload = raw_data
+
+    config = CloneSerialConfig(port=port, baudrate=baud, timeout=timeout, write_timeout=write_timeout)
+    try:
+        with CloneSerialTransport.open(config, logger=logger) as transport:
+            transport.write_clone(payload)
+    except CloneTransportError as exc:
+        logger.error("Clone transport error: %s", exc)
+        return 1
+    except OSError as exc:
+        logger.error("Unable to open serial port %s: %s", port, exc)
+        return 1
+
+    logger.info("Uploaded %d bytes to %s", len(payload), port)
+    return 0
+
+
+def _cmd_image_clone_read(*, port: str, baud: int, timeout: float, write_timeout: float, output: Path, logger) -> int:
+    """Read a clone image over serial and write it to ``output``."""
+
+    config = CloneSerialConfig(port=port, baudrate=baud, timeout=timeout, write_timeout=write_timeout)
+    try:
+        with CloneSerialTransport.open(config, logger=logger) as transport:
+            data = transport.read_clone()
+    except CloneTransportError as exc:
+        logger.error("Clone transport error: %s", exc)
+        return 1
+    except OSError as exc:
+        logger.error("Unable to open serial port %s: %s", port, exc)
+        return 1
+
+    output.write_bytes(data)
+    logger.info("Wrote %d bytes to %s", len(data), output)
+    return 0
+
+
+def _compose_clone_payload(image: RadioImage) -> bytes:
+    buffer = image.to_bytes()
+    data = bytearray()
+    data.extend(buffer[:CHANNEL_SECTION_BYTES])
+    tail = buffer[CHANNEL_SECTION_BYTES:]
+    cursor = 0
+    for segment in DEFAULT_SEGMENTS[1:]:
+        length = segment.length
+        segment_bytes = tail[cursor : cursor + length]
+        if len(segment_bytes) < length:
+            segment_bytes = segment_bytes + b"\xFF" * (length - len(segment_bytes))
+        data.extend(segment_bytes)
+        cursor += length
+    return bytes(data)
 
 
 def _cmd_channel_decode(input_arg: str, *, treat_as_hex: bool, logger) -> int:
@@ -250,14 +354,14 @@ def _build_image_summary(image: RadioImage, limit: int) -> dict[str, object]:
             for idx, entry in enumerate(image.vfo)
         ]
     if image.function:
-        summary["function"] = image.function.values
+        summary["function"] = {k: v for k, v in image.function.values.items() if v is not None}
     if image.dtmf:
         summary["dtmf"] = {
             "current_id": image.dtmf.current_id,
             "ptt_id_mode": image.dtmf.ptt_id_mode,
             "last_time_send": image.dtmf.last_time_send,
             "last_time_stop": image.dtmf.last_time_stop,
-            "code_groups": image.dtmf.code_groups[:5],
+            "code_groups": [code for code in image.dtmf.code_groups[:5] if code],
         }
     if image.modulation:
         summary["modulation"] = {
@@ -266,7 +370,7 @@ def _build_image_summary(image: RadioImage, limit: int) -> dict[str, object]:
             "ssb_current_channel": image.modulation.ssb_current_channel,
         }
     if image.aprs:
-        summary["aprs"] = image.aprs.fields
+        summary["aprs"] = {k: v for k, v in image.aprs.fields.items() if v not in (None, "")}
     return summary
 def _read_channel_bytes(input_arg: str, treat_as_hex: bool) -> bytes:
     """Load raw channel bytes either from a file or from a hex string."""

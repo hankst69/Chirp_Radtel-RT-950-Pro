@@ -1,4 +1,4 @@
-"""Channel record parsing for the RT-950 Pro."""
+﻿"""Channel record parsing for the RT-950 Pro."""
 from __future__ import annotations
 
 __all__ = [
@@ -10,7 +10,7 @@ __all__ = [
     "ChannelRecord",
 ]
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import logging
 import unicodedata
@@ -250,6 +250,20 @@ class ToneSetting:
     ctcss_hz: Optional[float] = None
     dcs_code: Optional[int] = None
     dcs_polarity: Optional[str] = None
+    _raw_bytes: bytes = field(default=b"", repr=False, compare=False)
+    _original_state: Optional[tuple] = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._original_state is None:
+            object.__setattr__(self, "_original_state", self._state_tuple())
+
+    def _state_tuple(self) -> tuple:
+        return (
+            self.mode,
+            self.ctcss_hz,
+            self.dcs_code,
+            self.dcs_polarity,
+        )
 
     @property
     def is_off(self) -> bool:
@@ -289,21 +303,34 @@ class ToneSetting:
     def to_bytes(self) -> bytes:
         """Encode the tone information into the radio's two-byte format."""
 
+        current_state = self._state_tuple()
+        if (
+            self._original_state is not None
+            and current_state == self._original_state
+            and self._raw_bytes
+        ):
+            return self._raw_bytes
+
         if self.mode is ToneMode.OFF:
-            return b"\x00\x00"
-        if self.mode is ToneMode.DCS and self.dcs_code is not None and self.dcs_polarity:
+            result = b"\x00\x00"
+        elif self.mode is ToneMode.DCS and self.dcs_code is not None and self.dcs_polarity:
             token = f"D{self.dcs_code:03}{self.dcs_polarity.upper()}"
             try:
                 index = _DCS_CODES.index(token)
             except ValueError as exc:
                 raise ValueError(f"Unsupported DCS code {token}") from exc
-            return bytes((index + 1, 0x00))
-        if self.mode is ToneMode.CTCSS and self.ctcss_hz is not None:
+            result = bytes((index + 1, 0x00))
+        elif self.mode is ToneMode.CTCSS and self.ctcss_hz is not None:
             value = int(round(self.ctcss_hz * 10))
             if value <= 0 or value > 0xFFFF:
                 raise ValueError(f"CTCSS value out of range: {self.ctcss_hz}")
-            return bytes((value & 0xFF, (value >> 8) & 0xFF))
-        return b"\x00\x00"
+            result = bytes((value & 0xFF, (value >> 8) & 0xFF))
+        else:
+            result = b"\x00\x00"
+
+        object.__setattr__(self, "_raw_bytes", result)
+        object.__setattr__(self, "_original_state", current_state)
+        return result
 
     @staticmethod
     def from_bytes(raw: bytes) -> "ToneSetting":
@@ -313,29 +340,36 @@ class ToneSetting:
             raise ValueError("Tone bytes must be length 2")
         first, second = raw
         if first == 0 and second == 0:
-            return ToneSetting.off()
-        if second == 0:
+            setting = ToneSetting.off()
+        elif second == 0:
             index = first
             if 1 <= index <= len(_DCS_CODES):
                 token = _DCS_CODES[index - 1]
                 code = int(token[1:4])
                 polarity = token[4]
-                return ToneSetting.dcs(code, polarity)
-            _LOG.warning("Unknown DCS index %s", index)
-            return ToneSetting.off()
-        value = (second << 8) | first
-        if value == 0xFFFF:
-            return ToneSetting.off()
-        hz = value / 10.0
-        return ToneSetting.ctcss(hz)
+                setting = ToneSetting.dcs(code, polarity)
+            else:
+                _LOG.warning("Unknown DCS index %s", index)
+                setting = ToneSetting.off()
+        else:
+            value = (second << 8) | first
+            if value == 0xFFFF:
+                setting = ToneSetting.off()
+            else:
+                hz = value / 10.0
+                setting = ToneSetting.ctcss(hz)
+
+        object.__setattr__(setting, "_raw_bytes", bytes(raw))
+        object.__setattr__(setting, "_original_state", setting._state_tuple())
+        return setting
 
 
 class PowerLevel(Enum):
     """Output power selections available to the channel."""
 
-    LOW = 0
+    HIGH = 0
     MEDIUM = 1
-    HIGH = 2
+    LOW = 2
 
 
 class Bandwidth(Enum):
@@ -373,6 +407,8 @@ class ChannelRecord:
     rx_modulation: Modulation
     fhss_code: Optional[str]
     name: str
+    _raw_bytes: bytes = field(default=b"", repr=False, compare=False)
+    _original_state: Optional[tuple] = field(default=None, repr=False, compare=False)
 
     @classmethod
     def from_bytes(cls, data: bytes, *, logger: Optional[logging.Logger] = None) -> "ChannelRecord":
@@ -399,7 +435,7 @@ class ChannelRecord:
         rx_modulation = Modulation(flags & 0x01)
         fhss_code = _decode_fhss_code(data[16:20])
         name = _decode_name(data[20:32], logger)
-        return cls(
+        record = cls(
             rx_hz=rx_hz,
             tx_hz=tx_hz,
             rx_tone=rx_tone,
@@ -418,11 +454,20 @@ class ChannelRecord:
             fhss_code=fhss_code,
             name=name,
         )
+        record._raw_bytes = bytes(data)
+        record._original_state = record._state_tuple()
+        return record
 
     def to_bytes(self, *, logger: Optional[logging.Logger] = None) -> bytes:
         """Serialise the record back into the radio's 32-byte format."""
 
         logger = logger or _LOG
+
+        current_state = self._state_tuple()
+        if self._original_state is not None and current_state == self._original_state:
+            if self._raw_bytes:
+                return self._raw_bytes
+
         buf = bytearray(b"\xFF" * 32)
         buf[0:4] = _encode_frequency(self.rx_hz)
         buf[4:8] = _encode_frequency(self.tx_hz)
@@ -450,7 +495,31 @@ class ChannelRecord:
         buf[15] = flags
         buf[16:20] = _encode_fhss_code(self.fhss_code)
         buf[20:32] = _encode_name(self.name, logger)
-        return bytes(buf)
+        result = bytes(buf)
+        self._raw_bytes = result
+        self._original_state = current_state
+        return result
+
+    def _state_tuple(self) -> tuple:
+        return (
+            self.rx_hz,
+            self.tx_hz,
+            self.rx_tone._state_tuple(),
+            self.tx_tone._state_tuple(),
+            self.signalling_group,
+            self.ptt_id,
+            self.power,
+            self.scrambler,
+            self.learn_fhss,
+            self.bandwidth,
+            self.encryption,
+            self.busy_lockout,
+            self.scan_add,
+            self.tx_enabled,
+            self.rx_modulation,
+            self.fhss_code,
+            self.name,
+        )
 
 
 def _decode_frequency(raw: bytes) -> Optional[int]:

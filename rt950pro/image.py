@@ -21,6 +21,11 @@ from .sections import (
     FunctionSettings,
     ModulationSettings,
     VFOSettings,
+    encode_aprs_section,
+    encode_dtmf_section,
+    encode_function_section,
+    encode_modulation_sections,
+    encode_vfo_section,
     parse_aprs_section,
     parse_dtmf_section,
     parse_function_section,
@@ -45,6 +50,15 @@ DTMF_SECTION_BYTES = 384
 MODULATION_SECTION_BYTES = 256
 MODULATION_NAME_SECTION_BYTES = 768
 APRS_SECTION_BYTES = 128
+
+KNOWN_SECTION_BYTES = (
+    VFO_SECTION_BYTES
+    + FUNCTION_SECTION_BYTES
+    + DTMF_SECTION_BYTES
+    + MODULATION_SECTION_BYTES
+    + MODULATION_NAME_SECTION_BYTES
+    + APRS_SECTION_BYTES
+)
 
 
 def _chunk(iterable: Sequence[int], size: int) -> Iterable[bytes]:
@@ -165,11 +179,48 @@ class RadioImage:
             raise ValueError(
                 f"Image must contain {CHANNEL_COUNT} channels; has {len(self.channels)}"
             )
-        buffer = bytearray(CHANNEL_SECTION_BYTES + len(self.remainder))
+
+        tail = bytearray(self.remainder)
+        if len(tail) < KNOWN_SECTION_BYTES:
+            tail.extend(b"\xFF" * (KNOWN_SECTION_BYTES - len(tail)))
+
+        offset = 0
+
+        vfo_raw = bytes(tail[offset : offset + VFO_SECTION_BYTES])
+        tail[offset : offset + VFO_SECTION_BYTES] = encode_vfo_section(self.vfo, vfo_raw)
+        offset += VFO_SECTION_BYTES
+
+        function_raw = bytes(tail[offset : offset + FUNCTION_SECTION_BYTES])
+        tail[offset : offset + FUNCTION_SECTION_BYTES] = encode_function_section(
+            self.function, function_raw
+        )
+        offset += FUNCTION_SECTION_BYTES
+
+        dtmf_raw = bytes(tail[offset : offset + DTMF_SECTION_BYTES])
+        tail[offset : offset + DTMF_SECTION_BYTES] = encode_dtmf_section(self.dtmf, dtmf_raw)
+        offset += DTMF_SECTION_BYTES
+
+        params_offset = offset
+        names_offset = params_offset + MODULATION_SECTION_BYTES
+
+        params_raw = bytes(tail[params_offset : params_offset + MODULATION_SECTION_BYTES])
+        names_raw = bytes(tail[names_offset : names_offset + MODULATION_NAME_SECTION_BYTES])
+        mod_params, mod_names = encode_modulation_sections(
+            self.modulation, params_raw, names_raw
+        )
+        tail[params_offset : params_offset + MODULATION_SECTION_BYTES] = mod_params
+        tail[names_offset : names_offset + MODULATION_NAME_SECTION_BYTES] = mod_names
+        offset = names_offset + MODULATION_NAME_SECTION_BYTES
+
+        aprs_raw = bytes(tail[offset : offset + APRS_SECTION_BYTES])
+        tail[offset : offset + APRS_SECTION_BYTES] = encode_aprs_section(self.aprs, aprs_raw)
+
+        buffer = bytearray(CHANNEL_SECTION_BYTES + len(tail))
         for index, channel in enumerate(self.channels):
             start = index * CHANNEL_SIZE
             buffer[start : start + CHANNEL_SIZE] = channel.to_bytes(logger=logger)
-        buffer[CHANNEL_SECTION_BYTES:] = self.remainder
+
+        buffer[CHANNEL_SECTION_BYTES:] = tail
         return bytes(buffer)
 
     def empty_slot_indexes(self) -> List[int]:
