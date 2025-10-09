@@ -1,14 +1,23 @@
 # Load the RT‑950 Pro Driver in CHIRP
 ```
-⚠️ WARNING: This is not the standard way to use CHIRP. I am releasing the driver directly here because I wanted to do this myself and no one else had a driver ready yet.
+⚠️ WARNING: This is not the CORRECT way to use CHIRP. 
+I am releasing the driver directly here because I wanted 
+to do this myself and no one else had a driver ready yet.
 
-This should work; however, the warnings about the possibility of breaking radios or running malicious code exist in CHIRP for a reason.
+This should work; however, the warnings about the 
+possibility of breaking radios or running malicious code 
+exist in CHIRP for a reason.
 
 Please understand the risks before you continue.
 
-I’ll be happy to contribute this driver to CHIRP when time permits, but I don’t currently have the time due to work, family, and health constraints, and I know people are waiting for this.
+I’ll be happy to contribute this driver to CHIRP when time 
+permits, but I don’t currently have the time due to work,
+family, and health constraints, and I know people are 
+waiting for this.
 
-There are likely bugs; some things may not work. Please use this for education and inspiration, and build awesome things with it.
+There are likely bugs; some things may not work. Please 
+use this for education and inspiration, and build awesome
+things with it.
 
 73 — Nathan (2E0NBS)
 ```
