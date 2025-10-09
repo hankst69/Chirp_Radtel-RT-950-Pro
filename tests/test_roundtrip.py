@@ -80,7 +80,7 @@ def test_round_trip_with_mutations():
         image.dtmf.code_groups[0] = "12"
 
     assert image.modulation
-    expected_mod_freq = (image.modulation.channels[0].fm_frequency + 5) % 65536
+    expected_mod_freq = (image.modulation.channels[0].fm_frequency or 0) + 10_000
     image.modulation.channels[0].fm_frequency = expected_mod_freq
     image.modulation.channels[0].fm_name = "LOCAL FM"
 
