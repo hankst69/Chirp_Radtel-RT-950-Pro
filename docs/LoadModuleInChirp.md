@@ -4,32 +4,26 @@ This guide shows how to enable CHIRP’s developer mode, load the RT‑950 Pro d
 
 ## Prerequisites
 - CHIRP daily build (recommended).
-- The monolithic driver file from this repo: `chirp_driver/radtel_rt950pro.py`.
-  - Alternative: If you have a packaged monolith under a different name, use that file instead.
+- The driver file from this repo: `chirp_driver/radtel_rt950pro.py`.
 
 ## One‑Time Setup in CHIRP
 1) Enable developer mode
    - In CHIRP, go to `Help` → `Enable Developer Mode`.
+     ![Enable Developer Mode](images/help-developer-mode.png)
    - Confirm the warning dialog (click `Yes`).
+     ![Restart Prompt](images/restart-prompt.png)
    - Close and reopen CHIRP for the change to take effect.
-   
-   ![Enable Developer Mode](images/help-developer-mode.png)
-   ![Restart Prompt](images/restart-prompt.png)
 
 2) Show extra fields
    - In CHIRP, go to `View` → `Show Extra Fields` and ensure it is checked.
    - This only needs to be set once.
-
-   ![Show Extra Fields](images/view-show-extra-fields.png)
-
 ## Load the Driver Module
 1) In CHIRP, go to `File` → `Load Module…`.
-2) A warning dialog will appear; accept it (click `Yes`).
-3) Browse to the driver file (e.g., `chirp_driver/radtel_rt950pro.py`) you saved locally and click `Open`/`OK`.
-4) CHIRP should indicate the module has been loaded (look for a banner or note in the title bar/status area).
-
    ![Load Module Menu](images/file-load-module.png)
+2) A warning dialog will appear; accept it (click `Yes`).
+3) Browse to the driver file (e.g., `chirp_driver/radtel_rt950pro.py`) you saved locally and click `Open` or `OK`.
    ![Select Driver File](images/driver-selected.png)
+4) CHIRP should indicate the module has been loaded (look for a banner or note in the title bar or status area).
    ![Module Loaded Indicator](images/module-loaded-banner.png)
 
 Notes
@@ -44,6 +38,7 @@ Notes
    ![Download From Radio](images/radio-download.png)
    ![Select Port/Vendor/Model](images/port-vendor-model.png)
 
+ 
 ## Adding Screenshots (for GitHub Preview)
 This page references images under `docs/images`. To add or update screenshots:
 - Save PNG/JPG files into `docs/images/` using short, hyphenated names (e.g., `file-load-module.png`).
@@ -72,4 +67,3 @@ Example snippet
 - Monolithic driver in this repo: `chirp_driver/radtel_rt950pro.py`.
 - You can download just that file and point CHIRP’s “Load Module…” at it.
 - If you build a monolith via tooling, use the generated `.py` file path instead.
-
