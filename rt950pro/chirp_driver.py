@@ -232,6 +232,21 @@ except ImportError:  # pragma: no cover - fallback for local development
         def __iter__(self):
             return iter(self._children)
 
+        def get(self, name, default=None):
+            for child in self._children:
+                if isinstance(child, RadioSetting) and child.name == name:
+                    value_obj = getattr(child, 'value', None)
+                    if hasattr(value_obj, 'get_value'):
+                        return value_obj.get_value()
+                    return value_obj
+            return default
+
+        def __getitem__(self, name):
+            result = self.get(name, None)
+            if result is None:
+                raise KeyError(name)
+            return result
+
         def walk(self):
             for child in self._children:
                 if isinstance(child, RadioSetting):
@@ -258,6 +273,9 @@ except ImportError:  # pragma: no cover - fallback for local development
             if self._apply:
                 self._apply()
 
+        def get_name(self):
+            return self.name
+
     class RadioSettings(RadioSettingGroup):
         def __init__(self, *groups):
             super().__init__('root', 'root', *groups)
@@ -267,6 +285,38 @@ except ImportError:  # pragma: no cover - fallback for local development
         RadioFeatures = _RadioFeatures
         CloneModeRadio = _CloneModeRadio
         PowerLevel = _PowerLevel
+
+        @staticmethod
+        def format_freq(hz):
+            hz = 0 if hz in (None, "") else int(hz)
+            return f"{hz / 1_000_000:.6f}"
+
+        @staticmethod
+        def parse_freq(text):
+            value = str(text).strip().lower()
+            if not value:
+                return 0
+            multiplier = 1_000_000
+            if value.endswith('mhz'):
+                value = value[:-3].strip()
+                multiplier = 1_000_000
+            elif value.endswith('khz'):
+                value = value[:-3].strip()
+                multiplier = 1_000
+            elif value.endswith('hz'):
+                value = value[:-2].strip()
+                multiplier = 1
+            try:
+                numeric = float(value)
+            except ValueError as exc:
+                raise ValueError(f"Invalid frequency '{text}'") from exc
+            if numeric < 0:
+                raise ValueError('Frequency must be non-negative')
+            if multiplier == 1 and numeric >= 1_000_000:
+                return int(round(numeric))
+            if multiplier == 1_000_000 and numeric >= 1_000_000:
+                return int(round(numeric))
+            return int(round(numeric * multiplier))
     directory = _Directory()  # type: ignore
     errors = _Errors()  # type: ignore
 
@@ -320,6 +370,9 @@ _FUNCTION_UI = {
     'dtmf_mode': {'label': 'DTMF Mode', 'type': 'enum', 'choices': [('Off', 0), ('DT-ST', 1), ('ANI-ID', 2), ('DTMF', 3)]},
     'scan_mode': {'label': 'Scan Mode', 'type': 'enum', 'choices': [('Time', 0), ('Carrier', 1), ('Search', 2)]},
     'ptt_id': {'label': 'PTT ID', 'type': 'enum', 'choices': [('Off', 0), ('BOT', 1), ('EOT', 2), ('Both', 3)]},
+    'display_mode_a': {'label': 'Display Mode A', 'type': 'enum', 'choices': [('Channel', 0), ('Frequency', 1), ('Name', 2)]},
+    'display_mode_b': {'label': 'Display Mode B', 'type': 'enum', 'choices': [('Channel', 0), ('Frequency', 1), ('Name', 2)]},
+    'display_mode_c': {'label': 'Display Mode C', 'type': 'enum', 'choices': [('Channel', 0), ('Frequency', 1), ('Name', 2)]},
     'auto_key_lock': {'label': 'Auto Key Lock', 'type': 'bool'},
     'alarm_mode': {'label': 'Alarm Mode', 'type': 'enum', 'choices': [('Local', 0), ('Remote', 1), ('Tone', 2)]},
     'alarm_sound': {'label': 'Alarm Sound', 'type': 'enum', 'choices': [('Off', 0), ('Type 1', 1), ('Type 2', 2)]},
@@ -1247,7 +1300,7 @@ class RT950ProRadio(chirp_common.CloneModeRadio):
             channel.encryption = int(encryption_raw)
         except (TypeError, ValueError):
             channel.encryption = 0
-        if channel.encryption not in (0, 1, 2, 3):
+        if channel.encryption not in (0, 1, 2):
             channel.encryption = 0
         channel.learn_fhss = False
         channel.fhss_code = None
