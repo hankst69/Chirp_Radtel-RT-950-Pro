@@ -1,10 +1,22 @@
 # Load the RT‑950 Pro Driver in CHIRP
+```
+⚠️ WARNING: This is not the standard way to use CHIRP. I am releasing the driver directly here because I wanted to do this myself and no one else had a driver ready yet.
 
-This guide shows how to enable CHIRP’s developer mode, load the RT‑950 Pro driver module, and download from the radio. It also explains how to add screenshots so the page renders nicely on GitHub.
+This should work; however, the warnings about the possibility of breaking radios or running malicious code exist in CHIRP for a reason.
+
+Please understand the risks before you continue.
+
+I’ll be happy to contribute this driver to CHIRP when time permits, but I don’t currently have the time due to work, family, and health constraints, and I know people are waiting for this.
+
+There are likely bugs; some things may not work. Please use this for education and inspiration, and build awesome things with it.
+
+73 — Nathan (2E0NBS)
+```
+This guide shows how to enable CHIRP’s developer mode, load the RT‑950 Pro driver module, and download from the radio.
 
 ## Prerequisites
 - CHIRP daily build (recommended).
-- The driver file from this repo: `chirp_driver/radtel_rt950pro.py`.
+- The driver file from this repo: [`chirp_driver/radtel_rt950pro.py`](../chirp_driver/radtel_rt950pro.py)
 
 ## One‑Time Setup in CHIRP
 1) Enable developer mode
@@ -14,16 +26,14 @@ This guide shows how to enable CHIRP’s developer mode, load the RT‑950 Pro d
      ![Restart Prompt](images/restart-prompt.png)
    - Close and reopen CHIRP for the change to take effect.
 
-2) Show extra fields
-   - In CHIRP, go to `View` → `Show Extra Fields` and ensure it is checked.
-   - This only needs to be set once.
+
 ## Load the Driver Module
 1) In CHIRP, go to `File` → `Load Module…`.
    ![Load Module Menu](images/file-load-module.png)
 2) A warning dialog will appear; accept it (click `Yes`).
 3) Browse to the driver file (e.g., `chirp_driver/radtel_rt950pro.py`) you saved locally and click `Open` or `OK`.
    ![Select Driver File](images/driver-selected.png)
-4) CHIRP should indicate the module has been loaded (look for a banner or note in the title bar or status area).
+4) CHIRP should indicate the module has been loaded (look for a banner or note in the title bar/status area).
    ![Module Loaded Indicator](images/module-loaded-banner.png)
 
 Notes
@@ -33,23 +43,10 @@ Notes
 1) Turn on the radio and connect the programming cable (radio jack ↔ computer).
 2) In CHIRP, go to `Radio` → `Download From Radio…`.
 3) Select your serial `Port`, then set `Vendor` to `Radtel` and `Model` to `RT‑950 Pro` (or the name provided by the loaded module).
-4) Click `OK` and wait for the read to complete.
-
-   ![Download From Radio](images/radio-download.png)
    ![Select Port/Vendor/Model](images/port-vendor-model.png)
-
+4) Click `OK` and wait for the read to complete.
+   ![Download From Radio](images/radio-download.png)
  
-## Adding Screenshots (for GitHub Preview)
-This page references images under `docs/images`. To add or update screenshots:
-- Save PNG/JPG files into `docs/images/` using short, hyphenated names (e.g., `file-load-module.png`).
-- Use relative links in Markdown so GitHub renders them: `![Alt text](images/your-file.png)`.
-- Recommended capture size: ~1200 px width (GitHub will scale down).
-- Commit the images so they are included in the repo.
-
-Example snippet
-```
-![Enable Developer Mode](images/help-developer-mode.png)
-```
 
 ## Troubleshooting
 - Load Module is missing
