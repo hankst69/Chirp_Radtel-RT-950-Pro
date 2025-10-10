@@ -340,6 +340,32 @@ class ExampleRadioDriver(chirp_common.CloneModeRadio):
 
 ## Addendum: CSV Defaults and UI Progress (RT‑950 Pro)
 
+- CSV export compatibility (DtcsCode defaults)
+  - CHIRP’s CSV exporter validates `DtcsCode` and `RxDtcsCode` even when `tmode` is blank.
+  - Use the first valid DCS code (`023`) as a placeholder for non‑DTCS rows.
+  - Initialize when building `chirp_common.Memory`:
+    - `mem.dtcs = mem.rx_dtcs = chirp_common.DTCS_CODES[0]  # 23`
+    - Leave `mem.tmode = ''` unless the channel uses DCS.
+    - If an incoming `Memory` has `tmode == 'DTCS'` but either code is `0`, normalize to OFF before applying back to the channel.
+
+- UI progress updates
+  - Use `chirp_common.Status` + `self.status_fn(status)`.
+  - Before a long operation: set `status.cur = 0`, `status.max = total_blocks`, `status.msg = 'Cloning from radio…'` (or `'Cloning to radio…'`), then call the callback.
+  - During the per‑block loop: update `status.cur = blocks_done` and call the callback.
+  - If block I/O is inside a transport helper, expose `progress_cb(done, total, phase)` and adapt to `Status` in the driver.
+
+- Serial timeout floor
+  - If the serial object has unset/too‑low timeouts, set a floor of `3.0` seconds in the transport constructor. Do not override higher values set upstream.
+
+- Band/mode enforcement
+  - Expand `valid_bands` to reflect actual behavior (e.g., 18–64 MHz FM/NFM; 118–137 MHz AM RX only).
+  - When applying `Memory` → channel:
+    - Airband (118–137 MHz): force AM, disable TX.
+    - 18–64 MHz: FM only; allow NFM/WFM bandwidth selection.
+
+- Bandwidth bit conventions
+  - For the RT‑950 Pro image flags: bit6=1 → NARROW; bit6=0 → WIDE.
+  - Keep channel and VFO encode/decode consistent and map `NFM` ↔ NARROW, `FM` ↔ WIDE.
 
 
 
