@@ -1055,8 +1055,11 @@ class RT950ProRadio(chirp_common.CloneModeRadio):
         rf.valid_bands = [
             (18_000_000, 64_000_000),   # Low HF confirmed RX/TX (FM only)
             (118_000_000, 137_000_000), # Airband RX (AM only, TX disabled)
+            (70_000_000, 118_000_000),  # Lower VHF before airband
             (136_000_000, 174_000_000),
+            (174_000_000, 400_000_000),
             (400_000_000, 480_000_000),
+            (480_000_000, 580_000_000),
         ]
         rf.has_bank = False
         rf.has_bank_names = False
