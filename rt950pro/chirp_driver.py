@@ -1235,8 +1235,12 @@ class RT950ProRadio(chirp_common.CloneModeRadio):
     def _apply_tones(self, mem, channel: ChannelRecord) -> None:
         tx = channel.tx_tone
         rx = channel.rx_tone
-        mem.dtcs = 0
-        mem.rx_dtcs = 0
+        # CHIRP's CSV exporter validates DtcsCode/RxDtcsCode even when
+        # tmode is not DTCS. Use a valid default (e.g. 023) instead of 000
+        # to avoid exporter errors.
+        default_dcs = chirp_common.DTCS_CODES[0]
+        mem.dtcs = default_dcs
+        mem.rx_dtcs = default_dcs
         mem.dtcs_polarity = "NN"
         if tx.is_off and rx.is_off:
             mem.tmode = ""
