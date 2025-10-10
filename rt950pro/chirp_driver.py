@@ -1053,6 +1053,8 @@ class RT950ProRadio(chirp_common.CloneModeRadio):
         rf = chirp_common.RadioFeatures()
         rf.memory_bounds = (0, CHANNEL_COUNT - 1)
         rf.valid_bands = [
+            (18_000_000, 64_000_000),   # Low HF confirmed RX/TX (FM only)
+            (118_000_000, 137_000_000), # Airband RX (AM only, TX disabled)
             (136_000_000, 174_000_000),
             (400_000_000, 480_000_000),
         ]
@@ -1075,7 +1077,7 @@ class RT950ProRadio(chirp_common.CloneModeRadio):
         rf.valid_skips = ["", "S"]
         rf.valid_dtcs_pols = ["NN", "NR", "RN", "RR"]
         rf.valid_dtcs_codes = [0] + [code for code in chirp_common.DTCS_CODES if code != 0]
-        rf.valid_tuning_steps = [2.5, 5.0, 6.25, 10.0, 12.5, 25.0]
+        rf.valid_tuning_steps = [2.5, 5.0, 6.25, 8.33, 10.0, 12.5, 25.0]
         rf.valid_characters = chirp_common.CHARSET_ASCII
         rf.valid_name_length = 12
         return rf
@@ -1308,12 +1310,29 @@ class RT950ProRadio(chirp_common.CloneModeRadio):
         mode = (mem.mode or "").upper()
         if mode not in {"AM", "FM", "NFM"}:
             mode = "AM" if channel.rx_modulation is Modulation.AM else "FM"
-        if mode == "AM":
+
+        # Band-specific constraints
+        freq = channel.rx_hz or 0
+        in_airband = 118_000_000 <= freq <= 137_000_000
+        in_low_hf = 18_000_000 <= freq <= 64_000_000
+
+        if in_airband:
+            # Airband: AM only, TX disabled
             channel.rx_modulation = Modulation.AM
             channel.bandwidth = Bandwidth.WIDE
-        else:
+            channel.tx_enabled = False
+        elif in_low_hf:
+            # Low HF: FM only
             channel.rx_modulation = Modulation.FM
             channel.bandwidth = Bandwidth.NARROW if mode == "NFM" else Bandwidth.WIDE
+        else:
+            # Default behavior for VHF/UHF
+            if mode == "AM":
+                channel.rx_modulation = Modulation.AM
+                channel.bandwidth = Bandwidth.WIDE
+            else:
+                channel.rx_modulation = Modulation.FM
+                channel.bandwidth = Bandwidth.NARROW if mode == "NFM" else Bandwidth.WIDE
         if isinstance(mem.power, chirp_common.PowerLevel):
             key = str(mem.power).upper()
         elif isinstance(mem.power, str) and mem.power:
