@@ -3669,50 +3669,50 @@ class RT950ProRadio(chirp_common.CloneModeRadio):
             mem.duplex = "split"
             mem.offset = channel.tx_hz
 
-def _apply_tones(self, mem, channel: ChannelRecord) -> None:
-    tx = channel.tx_tone
-    rx = channel.rx_tone
-    # CHIRP's CSV exporter validates DtcsCode/RxDtcsCode even when
-    # tmode is not DTCS. Use a valid default (e.g. 023) instead of 000
-    # to avoid exporter errors.
-    default_dcs = chirp_common.DTCS_CODES[0]
-    mem.dtcs = default_dcs
-    mem.rx_dtcs = default_dcs
-    mem.dtcs_polarity = "NN"
-    if tx.is_off and rx.is_off:
-        mem.tmode = ""
-        return
-    if tx.mode is ToneMode.CTCSS and rx.is_off:
-        mem.tmode = "Tone"
-        mem.rtone = tx.ctcss_hz or 0.0
-        return
-    if tx.mode is ToneMode.CTCSS and rx.mode is ToneMode.CTCSS:
-        mem.tmode = "TSQL"
-        tone = tx.ctcss_hz or rx.ctcss_hz or 0.0
-        mem.rtone = tone
-        mem.ctone = tone
-        return
-    if tx.mode is ToneMode.DCS and tx.dcs_code is not None:
-        tx_pol = (tx.dcs_polarity or "N").upper()
+    def _apply_tones(self, mem, channel: ChannelRecord) -> None:
+        tx = channel.tx_tone
+        rx = channel.rx_tone
+        # CHIRP's CSV exporter validates DtcsCode/RxDtcsCode even when
+        # tmode is not DTCS. Use a valid default (e.g. 023) instead of 000
+        # to avoid exporter errors.
+        default_dcs = chirp_common.DTCS_CODES[0]
+        mem.dtcs = default_dcs
+        mem.rx_dtcs = default_dcs
+        mem.dtcs_polarity = "NN"
+        if tx.is_off and rx.is_off:
+            mem.tmode = ""
+            return
+        if tx.mode is ToneMode.CTCSS and rx.is_off:
+            mem.tmode = "Tone"
+            mem.rtone = tx.ctcss_hz or 0.0
+            return
+        if tx.mode is ToneMode.CTCSS and rx.mode is ToneMode.CTCSS:
+            mem.tmode = "TSQL"
+            tone = tx.ctcss_hz or rx.ctcss_hz or 0.0
+            mem.rtone = tone
+            mem.ctone = tone
+            return
+        if tx.mode is ToneMode.DCS and tx.dcs_code is not None:
+            tx_pol = (tx.dcs_polarity or "N").upper()
+            if rx.mode is ToneMode.DCS and rx.dcs_code is not None:
+                mem.tmode = "DTCS"
+                mem.dtcs = tx.dcs_code
+                mem.rx_dtcs = rx.dcs_code
+                rx_pol = (rx.dcs_polarity or "N").upper()
+            else:
+                mem.tmode = "DTCS"
+                mem.dtcs = tx.dcs_code
+                mem.rx_dtcs = tx.dcs_code
+                rx_pol = "N"
+            mem.dtcs_polarity = tx_pol + rx_pol
+            return
         if rx.mode is ToneMode.DCS and rx.dcs_code is not None:
             mem.tmode = "DTCS"
-            mem.dtcs = tx.dcs_code
+            mem.dtcs = rx.dcs_code
             mem.rx_dtcs = rx.dcs_code
-            rx_pol = (rx.dcs_polarity or "N").upper()
-        else:
-            mem.tmode = "DTCS"
-            mem.dtcs = tx.dcs_code
-            mem.rx_dtcs = tx.dcs_code
-            rx_pol = "N"
-        mem.dtcs_polarity = tx_pol + rx_pol
-        return
-    if rx.mode is ToneMode.DCS and rx.dcs_code is not None:
-        mem.tmode = "DTCS"
-        mem.dtcs = rx.dcs_code
-        mem.rx_dtcs = rx.dcs_code
-        mem.dtcs_polarity = "N" + (rx.dcs_polarity or "N").upper()
-        return
-    mem.tmode = ""
+            mem.dtcs_polarity = "N" + (rx.dcs_polarity or "N").upper()
+            return
+        mem.tmode = ""
 
     def _apply_memory_to_channel(self, mem, channel: ChannelRecord) -> None:
         if getattr(mem, "empty", False):
