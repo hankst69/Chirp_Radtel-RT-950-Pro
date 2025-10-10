@@ -474,7 +474,8 @@ class ChannelRecord:
         scrambler = (data[14] >> 4) & 0x0F
         flags = data[15]
         learn_fhss = bool(flags & 0x80)
-        bandwidth = Bandwidth((flags >> 6) & 0x01)
+        # Radio uses bit6: 1 = NARROW, 0 = WIDE
+        bandwidth = Bandwidth.NARROW if ((flags >> 6) & 0x01) else Bandwidth.WIDE
         encryption = (flags >> 4) & 0x03
         busy_lockout = bool(flags & 0x08)
         scan_add = bool(flags & 0x04)
@@ -528,7 +529,8 @@ class ChannelRecord:
         flags = 0
         if self.learn_fhss:
             flags |= 0x80
-        if self.bandwidth is Bandwidth.WIDE:
+        # Radio uses bit6: 1 = NARROW, 0 = WIDE
+        if self.bandwidth is Bandwidth.NARROW:
             flags |= 0x40
         flags |= (self.encryption & 0x03) << 4
         if self.busy_lockout:
@@ -846,7 +848,8 @@ def parse_vfo_section(section: bytes) -> List[VFOSettings]:
         tx_power = PowerLevel(min(tx_power_raw, PowerLevel.HIGH.value))
         scrambler = (chunk[16] >> 4) & 0x0F
         learn_fhss = bool((chunk[17] >> 7) & 0x01)
-        bandwidth = Bandwidth.WIDE if ((chunk[17] >> 6) & 0x01) else Bandwidth.NARROW
+        # Radio uses bit6: 1 = NARROW, 0 = WIDE
+        bandwidth = Bandwidth.NARROW if ((chunk[17] >> 6) & 0x01) else Bandwidth.WIDE
         encryption = (chunk[17] >> 4) & 0x03
         rx_modulation = Modulation.AM if (chunk[17] & 0x01) else Modulation.FM
         freq_band = chunk[18] & 0x0F
@@ -1165,7 +1168,8 @@ def encode_vfo_section(vfos: Optional[List[VFOSettings]], raw: Optional[bytes]) 
         flags = 0 if chunk[17] == 0xFF else chunk[17] & ~(0x80 | 0x40 | 0x30 | 0x01)
         if entry.learn_fhss:
             flags |= 0x80
-        if entry.bandwidth is Bandwidth.WIDE:
+        # Radio uses bit6: 1 = NARROW, 0 = WIDE
+        if entry.bandwidth is Bandwidth.NARROW:
             flags |= 0x40
         flags |= (entry.encryption & 0x03) << 4
         if entry.rx_modulation is Modulation.AM:

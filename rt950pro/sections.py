@@ -164,7 +164,8 @@ def parse_vfo_section(section: bytes) -> List[VFOSettings]:
         tx_power = PowerLevel(min(tx_power_raw, PowerLevel.HIGH.value))
         scrambler = (chunk[16] >> 4) & 0x0F
         learn_fhss = bool((chunk[17] >> 7) & 0x01)
-        bandwidth = Bandwidth.WIDE if ((chunk[17] >> 6) & 0x01) else Bandwidth.NARROW
+        # Radio uses bit6: 1 = NARROW, 0 = WIDE
+        bandwidth = Bandwidth.NARROW if ((chunk[17] >> 6) & 0x01) else Bandwidth.WIDE
         encryption = (chunk[17] >> 4) & 0x03
         rx_modulation = Modulation.AM if (chunk[17] & 0x01) else Modulation.FM
         freq_band = chunk[18] & 0x0F
@@ -495,7 +496,8 @@ def encode_vfo_section(vfos: Optional[List[VFOSettings]], raw: Optional[bytes]) 
         flags = 0 if chunk[17] == 0xFF else chunk[17] & ~(0x80 | 0x40 | 0x30 | 0x01)
         if entry.learn_fhss:
             flags |= 0x80
-        if entry.bandwidth is Bandwidth.WIDE:
+        # Radio uses bit6: 1 = NARROW, 0 = WIDE
+        if entry.bandwidth is Bandwidth.NARROW:
             flags |= 0x40
         flags |= (entry.encryption & 0x03) << 4
         if entry.rx_modulation is Modulation.AM:

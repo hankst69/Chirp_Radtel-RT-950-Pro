@@ -450,7 +450,8 @@ class ChannelRecord:
         scrambler = (data[14] >> 4) & 0x0F
         flags = data[15]
         learn_fhss = bool(flags & 0x80)
-        bandwidth = Bandwidth((flags >> 6) & 0x01)
+        # Radio uses bit6: 1 = NARROW, 0 = WIDE
+        bandwidth = Bandwidth.NARROW if ((flags >> 6) & 0x01) else Bandwidth.WIDE
         encryption = (flags >> 4) & 0x03
         busy_lockout = bool(flags & 0x08)
         scan_add = bool(flags & 0x04)
@@ -504,7 +505,8 @@ class ChannelRecord:
         flags = 0
         if self.learn_fhss:
             flags |= 0x80
-        if self.bandwidth is Bandwidth.WIDE:
+        # Radio uses bit6: 1 = NARROW, 0 = WIDE
+        if self.bandwidth is Bandwidth.NARROW:
             flags |= 0x40
         flags |= (self.encryption & 0x03) << 4
         if self.busy_lockout:
