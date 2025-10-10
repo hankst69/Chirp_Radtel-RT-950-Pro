@@ -2304,13 +2304,24 @@ class CloneSerialTransport:
     ) -> None:
         self.serial = serial_port
         self.logger = logger or get_logger("transport")
-        if getattr(self.serial, "timeout", None) in (None, 0):
-            self.serial.timeout = 1.0
-        if getattr(self.serial, "write_timeout", None) in (None, 0):
-            self.serial.write_timeout = 1.0
+        # Enforce sensible minimums to avoid premature timeouts during clone
+        try:
+            to = getattr(self.serial, "timeout", None)
+            if to is None or float(to) < 3.0:
+                self.serial.timeout = 3.0
+        except Exception:
+            self.serial.timeout = 3.0
+        try:
+            wto = getattr(self.serial, "write_timeout", None)
+            if wto is None or float(wto) < 3.0:
+                self.serial.write_timeout = 3.0
+        except Exception:
+            self.serial.write_timeout = 3.0
         self._rng = rng or random.Random()
         self._xor_key: Optional[bytearray] = None
         self._model: Optional[str] = None
+        # Optional per-block progress callback: (done, total, phase)
+        self.progress_cb: Optional[Callable[[int, int, str], None]] = None
 
     @classmethod
     def open(
@@ -2392,6 +2403,8 @@ class CloneSerialTransport:
             self.handshake()
 
         raw = bytearray()
+        total_blocks = sum(seg.length for seg in segments) // READ_BLOCK
+        done = 0
         for command, address in self._iter_read_commands(segments):
             header = bytes((command, (address >> 8) & 0xFF, address & 0xFF, READ_BLOCK))
             self.logger.debug(
@@ -2402,6 +2415,13 @@ class CloneSerialTransport:
             payload = bytearray(block[BLOCK_HEADER:])
             decrypted = self._apply_xor(payload)
             raw.extend(decrypted)
+            done += 1
+            if self.progress_cb:
+                try:
+                    self.progress_cb(done, total_blocks, "read")
+                except Exception:
+                    # Progress should never break the clone operation
+                    pass
         self._write(END_COMMAND)
         return bytes(raw)
 
@@ -2418,6 +2438,8 @@ class CloneSerialTransport:
             raise CloneTransportError(f"Write buffer length {len(data)} does not match expected {expected}")
 
         offset = 0
+        total_blocks = sum(seg.length for seg in segments) // READ_BLOCK
+        done = 0
         for command, address in self._iter_write_commands(segments):
             chunk = data[offset : offset + READ_BLOCK]
             if len(chunk) != READ_BLOCK:
@@ -2433,6 +2455,12 @@ class CloneSerialTransport:
                 )
             self.logger.debug("Received ACK for 0x%04X", address)
             offset += READ_BLOCK
+            done += 1
+            if self.progress_cb:
+                try:
+                    self.progress_cb(done, total_blocks, "write")
+                except Exception:
+                    pass
 
         self._write(END_COMMAND)
 
@@ -3547,6 +3575,50 @@ class RT950ProRadio(chirp_common.CloneModeRadio):
         if self.pipe is None:
             raise errors.RadioError("Serial pipe not initialised")
         transport = CloneSerialTransport(self.pipe, logger=LOG)
+        # Hook progress into CHIRP status if available
+        status = None
+        try:
+            status = chirp_common.Status()
+            status.msg = "Cloning from radio…"
+            status.max = 0
+        except Exception:
+            status = None
+        if status is not None and hasattr(self, "status_fn"):
+            blocks_per_segment = [seg.length // READ_BLOCK for seg in DEFAULT_SEGMENTS]
+            seg_labels = [
+                "Channels",
+                "VFO settings",
+                "Function settings",
+                "DTMF settings",
+                "Modulation params",
+                "Modulation names",
+                "APRS settings",
+            ]
+
+            def _progress(done: int, total: int, phase: str) -> None:
+                try:
+                    block_index = max(0, int(done) - 1)
+                    seg_idx = 0
+                    offset_blocks = block_index
+                    for count in blocks_per_segment:
+                        if offset_blocks < count:
+                            break
+                        offset_blocks -= count
+                        seg_idx += 1
+                    direction = "Reading" if phase == "read" else "Writing"
+                    if seg_idx == 0:
+                        per_block = max(1, READ_BLOCK // CHANNEL_SIZE)
+                        start_ch = offset_blocks * per_block + 1
+                        end_ch = min(start_ch + per_block - 1, CHANNEL_SECTION_BYTES // CHANNEL_SIZE)
+                        status.msg = f"{direction} channels {start_ch:03d}-{end_ch:03d}…"
+                    else:
+                        status.msg = f"{direction} {seg_labels[seg_idx]}…"
+                    status.cur = done
+                    status.max = total
+                    self.status_fn(status)
+                except Exception:
+                    pass
+            transport.progress_cb = _progress
         try:
             raw = transport.read_clone()
         except Exception as exc:
@@ -3563,6 +3635,49 @@ class RT950ProRadio(chirp_common.CloneModeRadio):
             raise errors.RadioError("No image loaded")
         payload = _build_clone_payload(self._image)
         transport = CloneSerialTransport(self.pipe, logger=LOG)
+        status = None
+        try:
+            status = chirp_common.Status()
+            status.msg = "Cloning to radio…"
+            status.max = 0
+        except Exception:
+            status = None
+        if status is not None and hasattr(self, "status_fn"):
+            blocks_per_segment = [seg.length // READ_BLOCK for seg in DEFAULT_SEGMENTS]
+            seg_labels = [
+                "Channels",
+                "VFO settings",
+                "Function settings",
+                "DTMF settings",
+                "Modulation params",
+                "Modulation names",
+                "APRS settings",
+            ]
+
+            def _progress(done: int, total: int, phase: str) -> None:
+                try:
+                    block_index = max(0, int(done) - 1)
+                    seg_idx = 0
+                    offset_blocks = block_index
+                    for count in blocks_per_segment:
+                        if offset_blocks < count:
+                            break
+                        offset_blocks -= count
+                        seg_idx += 1
+                    direction = "Reading" if phase == "read" else "Writing"
+                    if seg_idx == 0:
+                        per_block = max(1, READ_BLOCK // CHANNEL_SIZE)
+                        start_ch = offset_blocks * per_block + 1
+                        end_ch = min(start_ch + per_block - 1, CHANNEL_SECTION_BYTES // CHANNEL_SIZE)
+                        status.msg = f"{direction} channels {start_ch:03d}-{end_ch:03d}…"
+                    else:
+                        status.msg = f"{direction} {seg_labels[seg_idx]}…"
+                    status.cur = done
+                    status.max = total
+                    self.status_fn(status)
+                except Exception:
+                    pass
+            transport.progress_cb = _progress
         try:
             transport.write_clone(payload)
         except Exception as exc:

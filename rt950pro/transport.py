@@ -25,7 +25,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Optional, Sequence, Tuple
+from typing import Callable, Iterable, Optional, Sequence, Tuple
 import random
 
 import serial
@@ -116,13 +116,24 @@ class CloneSerialTransport:
     ) -> None:
         self.serial = serial_port
         self.logger = logger or get_logger("transport")
-        if getattr(self.serial, "timeout", None) in (None, 0):
-            self.serial.timeout = 1.0
-        if getattr(self.serial, "write_timeout", None) in (None, 0):
-            self.serial.write_timeout = 1.0
+        # Enforce sensible minimums to avoid premature timeouts during clone
+        try:
+            to = getattr(self.serial, "timeout", None)
+            if to is None or float(to) < 3.0:
+                self.serial.timeout = 3.0
+        except Exception:
+            self.serial.timeout = 3.0
+        try:
+            wto = getattr(self.serial, "write_timeout", None)
+            if wto is None or float(wto) < 3.0:
+                self.serial.write_timeout = 3.0
+        except Exception:
+            self.serial.write_timeout = 3.0
         self._rng = rng or random.Random()
         self._xor_key: Optional[bytearray] = None
         self._model: Optional[str] = None
+        # Optional per-block progress callback: (done, total, phase)
+        self.progress_cb: Optional[Callable[[int, int, str], None]] = None
 
     @classmethod
     def open(
@@ -204,6 +215,8 @@ class CloneSerialTransport:
             self.handshake()
 
         raw = bytearray()
+        total_blocks = sum(seg.length for seg in segments) // READ_BLOCK
+        done = 0
         for command, address in self._iter_read_commands(segments):
             header = bytes((command, (address >> 8) & 0xFF, address & 0xFF, READ_BLOCK))
             self.logger.debug(
@@ -214,6 +227,13 @@ class CloneSerialTransport:
             payload = bytearray(block[BLOCK_HEADER:])
             decrypted = self._apply_xor(payload)
             raw.extend(decrypted)
+            done += 1
+            if self.progress_cb:
+                try:
+                    self.progress_cb(done, total_blocks, "read")
+                except Exception:
+                    # Progress should never break the clone operation
+                    pass
         self._write(END_COMMAND)
         return bytes(raw)
 
@@ -230,6 +250,8 @@ class CloneSerialTransport:
             raise CloneTransportError(f"Write buffer length {len(data)} does not match expected {expected}")
 
         offset = 0
+        total_blocks = sum(seg.length for seg in segments) // READ_BLOCK
+        done = 0
         for command, address in self._iter_write_commands(segments):
             chunk = data[offset : offset + READ_BLOCK]
             if len(chunk) != READ_BLOCK:
@@ -245,6 +267,12 @@ class CloneSerialTransport:
                 )
             self.logger.debug("Received ACK for 0x%04X", address)
             offset += READ_BLOCK
+            done += 1
+            if self.progress_cb:
+                try:
+                    self.progress_cb(done, total_blocks, "write")
+                except Exception:
+                    pass
 
         self._write(END_COMMAND)
 

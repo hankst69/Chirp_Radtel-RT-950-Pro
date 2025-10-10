@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, Optional, Tuple
 
 from .channel import Bandwidth, ChannelRecord, Modulation, PowerLevel, ToneMode
-from .image import CHANNEL_COUNT, CHANNEL_SECTION_BYTES, RadioImage
+from .image import CHANNEL_COUNT, CHANNEL_SECTION_BYTES, CHANNEL_SIZE, RadioImage
 from .settings_api import (
     SettingsError,
     aprs_keys,
@@ -46,7 +46,7 @@ from .settings_api import (
     set_dtmf_ptt_mode,
     set_function_value,
 )
-from .transport import CloneSerialTransport, DEFAULT_SEGMENTS
+from .transport import CloneSerialTransport, DEFAULT_SEGMENTS, READ_BLOCK
 
 LOG = logging.getLogger(__name__)
 
@@ -1106,6 +1106,50 @@ class RT950ProRadio(chirp_common.CloneModeRadio):
         if self.pipe is None:
             raise errors.RadioError("Serial pipe not initialised")
         transport = CloneSerialTransport(self.pipe, logger=LOG)
+        # Hook progress into CHIRP status if available
+        status = None
+        try:
+            status = chirp_common.Status()
+            status.msg = "Cloning from radio…"
+            status.max = 0
+        except Exception:
+            status = None
+        if status is not None and hasattr(self, "status_fn"):
+            blocks_per_segment = [seg.length // READ_BLOCK for seg in DEFAULT_SEGMENTS]
+            seg_labels = [
+                "Channels",
+                "VFO settings",
+                "Function settings",
+                "DTMF settings",
+                "Modulation params",
+                "Modulation names",
+                "APRS settings",
+            ]
+
+            def _progress(done: int, total: int, phase: str) -> None:
+                try:
+                    block_index = max(0, int(done) - 1)
+                    seg_idx = 0
+                    offset_blocks = block_index
+                    for count in blocks_per_segment:
+                        if offset_blocks < count:
+                            break
+                        offset_blocks -= count
+                        seg_idx += 1
+                    direction = "Reading" if phase == "read" else "Writing"
+                    if seg_idx == 0:
+                        per_block = max(1, READ_BLOCK // CHANNEL_SIZE)
+                        start_ch = offset_blocks * per_block + 1
+                        end_ch = min(start_ch + per_block - 1, CHANNEL_SECTION_BYTES // CHANNEL_SIZE)
+                        status.msg = f"{direction} channels {start_ch:03d}-{end_ch:03d}…"
+                    else:
+                        status.msg = f"{direction} {seg_labels[seg_idx]}…"
+                    status.cur = done
+                    status.max = total
+                    self.status_fn(status)
+                except Exception:
+                    pass
+            transport.progress_cb = _progress
         try:
             raw = transport.read_clone()
         except Exception as exc:
@@ -1122,6 +1166,49 @@ class RT950ProRadio(chirp_common.CloneModeRadio):
             raise errors.RadioError("No image loaded")
         payload = _build_clone_payload(self._image)
         transport = CloneSerialTransport(self.pipe, logger=LOG)
+        status = None
+        try:
+            status = chirp_common.Status()
+            status.msg = "Cloning to radio…"
+            status.max = 0
+        except Exception:
+            status = None
+        if status is not None and hasattr(self, "status_fn"):
+            blocks_per_segment = [seg.length // READ_BLOCK for seg in DEFAULT_SEGMENTS]
+            seg_labels = [
+                "Channels",
+                "VFO settings",
+                "Function settings",
+                "DTMF settings",
+                "Modulation params",
+                "Modulation names",
+                "APRS settings",
+            ]
+
+            def _progress(done: int, total: int, phase: str) -> None:
+                try:
+                    block_index = max(0, int(done) - 1)
+                    seg_idx = 0
+                    offset_blocks = block_index
+                    for count in blocks_per_segment:
+                        if offset_blocks < count:
+                            break
+                        offset_blocks -= count
+                        seg_idx += 1
+                    direction = "Reading" if phase == "read" else "Writing"
+                    if seg_idx == 0:
+                        per_block = max(1, READ_BLOCK // CHANNEL_SIZE)
+                        start_ch = offset_blocks * per_block + 1
+                        end_ch = min(start_ch + per_block - 1, CHANNEL_SECTION_BYTES // CHANNEL_SIZE)
+                        status.msg = f"{direction} channels {start_ch:03d}-{end_ch:03d}…"
+                    else:
+                        status.msg = f"{direction} {seg_labels[seg_idx]}…"
+                    status.cur = done
+                    status.max = total
+                    self.status_fn(status)
+                except Exception:
+                    pass
+            transport.progress_cb = _progress
         try:
             transport.write_clone(payload)
         except Exception as exc:
