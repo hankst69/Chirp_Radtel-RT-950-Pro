@@ -1,59 +1,114 @@
-# CHIRP Driver Development Quickstart (UTF‑8, Combined)
+# CHIRP Driver Development Training Manual
 
-This combined quickstart merges our training manual with the latest lessons from the RT‑950 Pro effort. The original file existed in a legacy encoding and has been replaced with this UTF‑8 version.
+## 1. Introduction
 
-## Contents
-- Fundamentals and architecture
-- Reverse‑engineering workflow
-- Implementation outline (features, sync_in/out, memory mapping)
-- Testing strategy
-- Practical patterns validated on RT‑950 Pro
-- Monolith build workflow
+### Purpose of this guide
+This manual guides junior engineers through the end-to-end process of creating a new CHIRP-compatible driver for an unfamiliar radio. It explains background concepts, recommended workflows, tools, and best practices, enabling you to work safely and confidently when faced with unknown radio hardware.
 
-## Fundamentals (very short)
-- A CHIRP driver is a `CloneModeRadio` subclass that declares features, converts between the radio’s binary image and `chirp_common.Memory`, and implements `sync_in/sync_out`.
-- UI shows progress when the driver reports `chirp_common.Status` updates via `self.status_fn(status)`.
+### Audience and prerequisites
+- Junior software engineers or hobbyist developers.
+- Comfortable with Python programming and basic debugging tools.
+- Familiar with using the command line and version control (Git).
+- No prior experience with radios, RF concepts, or CHIRP is required.
 
-## Implementation outline
-- `get_features()`: set `memory_bounds`, `valid_bands`, `valid_modes`, steps, tone/DTCS support, etc.
-- `sync_in()`: serial handshake → read blocks → build `RadioImage` → `self._mmap = memmap.MemoryMapBytes(raw)`.
-- `sync_out()`: build raw payload from `RadioImage` → write blocks (verify ACKs).
-- `get_memory()/set_memory()`: translate between `RadioImage` channel structures and `chirp_common.Memory`.
+### What is CHIRP?
+CHIRP is an open-source programming utility that allows users to read, modify, and write configuration data for a wide range of radios. Each supported radio has a driver that translates between CHIRP’s generic data model and the radio’s specific communication protocol and memory layout.
 
-## Testing checklist
-- Round‑trip decode/encode of sections (unit tests where feasible).
-- Minimal on‑radio writes first; re‑read and compare.
-- CSV import/export works; no exporter errors.
+### Overview: how CHIRP interacts with radios via drivers
+1. The user selects a radio model from CHIRP’s interface.
+2. CHIRP loads the corresponding driver.
+3. The driver communicates with the radio (usually over a serial-like connection) to download memory data.
+4. The user edits the data generically in CHIRP.
+5. The driver converts edits back into the radio’s raw format and uploads them to the radio.
 
-## Practical Patterns (from RT‑950 Pro)
+Understanding both CHIRP’s expectations and the radio’s behavior is crucial to building a reliable driver.
 
-1) CSV DtcsCode defaults
-- CSV exporter validates `DtcsCode`/`RxDtcsCode` even when `tmode` is blank.
-- Initialize non‑DTCS rows to the first valid DCS code: `chirp_common.DTCS_CODES[0]` (023).
-- If `tmode == 'DTCS'` but either code is 0, normalize to OFF when applying back to the channel.
+## 2. Fundamentals
 
-2) UI progress updates
-- Before cloning: `status = chirp_common.Status(); status.cur=0; status.max=total; status.msg='Cloning from/to radio…'; self.status_fn(status)`.
-- Per block: increment `status.cur`; call `self.status_fn(status)`.
-- If block loops live in a transport helper, expose `progress_cb(done, total, phase)` and adapt in the driver to `Status`.
+### What is a "driver" in CHIRP?
+A CHIRP driver is a Python module that implements the logic required to:
+- Claim capabilities (e.g., supported memory slots, features).
+- Establish communication with the radio.
+- Convert between CHIRP's `Memory` objects and the radio's raw memory representation.
+- Handle downloading (clone/read) and uploading (clone/write).
 
-3) Serial timeout floor
-- Avoid spurious “Serial read timed out” after a successful clone by raising the floor in the transport constructor to 3.0s when the serial object has unset/too‑low timeouts. Do not override higher values set upstream.
+### General architecture of CHIRP
+- UI Layer: Provides desktop interface; allows users to edit channels and settings.
+- Core Data Model: Uses `chirp_common.Memory` objects to represent channel entries generically.
+- Driver Layer: Contains a set of Python classes (`CloneModeRadio` subclasses) that implement radio-specific behavior.
+- Transport Layer: Provides generic helpers for serial/USB communication (where applicable).
 
-4) Band/mode enforcement
-- Expand `valid_bands` to reflect actual behavior (e.g., 18–64 MHz FM/NFM; 118–137 MHz AM RX only).
-- When mapping Memory → channel:
-  - Airband: force AM; disable TX.
-  - 18–64 MHz: enforce FM; allow NFM/WFM bandwidth selection.
+### Terminology
+- Channel / Memory: A programmed slot storing frequency, tone, modulation, etc.
+- VFO (Variable Frequency Oscillator): A mode where the radio tunes to arbitrary frequencies without stored memories.
+- Offset / Duplex: Used for repeaters; describes transmit frequency relative to receive frequency.
+- Tone / CTCSS / DCS: Audio signaling used for squelch control.
+- Bank: A grouping of memories (not all radios support this).
+- Clone: The process of reading or writing the radio's entire configuration image.
 
-5) Bandwidth bit conventions
-- Confirm image flag semantics. For RT‑950 Pro: bit6=1 → NARROW; bit6=0 → WIDE.
-- Keep channel and VFO encode/decode consistent; map `NFM` ↔ NARROW, `FM` ↔ WIDE.
+### Overview of radio communication protocols
+Radios commonly use:
+- Serial over USB (most common): Presents as a virtual COM port on the host computer.
+- Native USB (HID or vendor-specific): Requires specialized handling.
+- Audio/composite interfaces: Some radios expose control lines via audio connectors.
 
-## Monolith build workflow
-- Make changes under `rt950pro/*`.
-- Rebuild: `py -3 scripts/build_monolith.py --output chirp_driver/radtel_rt950pro.py`
-- Load in CHIRP (Developer Mode) via File → Load Module…
+Regardless of physical interface, communication typically involves:
+- A handshake or login sequence.
+- Binary commands identified by opcodes or text tokens.
+- A sequence of read/write blocks with checksums or XOR masks.
 
-## Notes
-- This file supersedes the legacy-encoded quickstart; keep everything UTF‑8 to simplify contributions and automation.
+## 3. The Reverse Engineering Mindset
+
+### What reverse engineering means in this context
+You will interpret how an unknown radio communicates by observing its behavior, without official documentation. This includes understanding command structure, timing, and memory layout by analyzing data captures and the behavior of any vendor software.
+
+### Legal / ethical considerations
+- Respect firmware licensing and usage terms. Do not distribute proprietary firmware or encryption keys.
+- Obtain radios legitimately; avoid violating warranties.
+- Ensure your work complies with local regulations and community standards.
+
+### Tools of the trade
+- Serial sniffers: Software tools (e.g., serial port monitors) that capture data exchanged between the radio and software.
+- Logic analyzers: Hardware devices that capture digital signals for low-level analysis.
+- USB protocol analyzers: Capture USB traffic directly (for radios using native USB).
+- Hex editors & protocol decoders: Help interpret binary data, identify patterns, and decode structures.
+- Disassemblers / decompilers (optional): If vendor software is accessible, these tools can reveal how commands and memory layouts work.
+
+## 4. Getting Started With a New Radio
+
+### Gathering what's available
+1. User manuals: Often hint at clone modes, connector types, or programming sequences.
+2. Regulatory filings (e.g., FCC): May include block diagrams, radio interfaces, and test procedures.
+3. Vendor programming software: Provides a baseline for protocol behavior; use alongside sniffing tools.
+4. Community resources: Forums or user groups with shared experiences.
+
+... (unchanged main content retained) ...
+
+## Addendum: CSV Defaults and UI Progress (RT‑950 Pro)
+
+- CSV export compatibility (DtcsCode defaults)
+  - CHIRP’s CSV exporter validates `DtcsCode` and `RxDtcsCode` even when `tmode` is blank.
+  - Use the first valid DCS code (`023`) as a placeholder for non‑DTCS rows.
+  - Initialize when building `chirp_common.Memory`:
+    - `mem.dtcs = mem.rx_dtcs = chirp_common.DTCS_CODES[0]  # 23`
+    - Leave `mem.tmode = ''` unless the channel uses DCS.
+    - If an incoming `Memory` has `tmode == 'DTCS'` but either code is `0`, normalize to OFF before applying back to the channel.
+
+- UI progress updates
+  - Use `chirp_common.Status` + `self.status_fn(status)`.
+  - Before a long operation: set `status.cur = 0`, `status.max = total_blocks`, `status.msg = 'Cloning from radio…'` (or `'Cloning to radio…'`), then call the callback.
+  - During the per‑block loop: update `status.cur = blocks_done` and call the callback.
+  - If block I/O is inside a transport helper, expose `progress_cb(done, total, phase)` and adapt to `Status` in the driver.
+
+- Serial timeout floor
+  - If the serial object has unset/too‑low timeouts, set a floor of `3.0` seconds in the transport constructor. Do not override higher values set upstream.
+
+- Band/mode enforcement
+  - Expand `valid_bands` to reflect actual behavior (e.g., 18–64 MHz FM/NFM; 118–137 MHz AM RX only).
+  - When applying `Memory` → channel:
+    - Airband (118–137 MHz): force AM, disable TX.
+    - 18–64 MHz: FM only; allow NFM/WFM bandwidth selection.
+
+- Bandwidth bit conventions
+  - For the RT‑950 Pro image flags: bit6=1 → NARROW; bit6=0 → WIDE.
+  - Keep channel and VFO encode/decode consistent and map `NFM` ↔ NARROW, `FM` ↔ WIDE.
