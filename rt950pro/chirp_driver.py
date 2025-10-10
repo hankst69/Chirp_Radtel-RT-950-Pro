@@ -1076,7 +1076,9 @@ class RT950ProRadio(chirp_common.CloneModeRadio):
         rf.valid_power_levels = _CHIRP_POWER_LEVELS
         rf.valid_skips = ["", "S"]
         rf.valid_dtcs_pols = ["NN", "NR", "RN", "RR"]
-        rf.valid_dtcs_codes = [0] + [code for code in chirp_common.DTCS_CODES if code != 0]
+        # Use CHIRP's standard DCS code list; do not include 0/"000"
+        # to avoid invalid DTCS state during CSV export.
+        rf.valid_dtcs_codes = list(chirp_common.DTCS_CODES)
         rf.valid_tuning_steps = [2.5, 5.0, 6.25, 8.33, 10.0, 12.5, 25.0]
         rf.valid_characters = chirp_common.CHARSET_ASCII
         rf.valid_name_length = 12
@@ -1344,6 +1346,12 @@ class RT950ProRadio(chirp_common.CloneModeRadio):
         channel.scan_add = mem.skip != "S"
 
     def _update_tones_from_memory(self, mem, channel: ChannelRecord) -> None:
+        # Normalise any invalid DTCS entries (e.g., code 000 from CSV/UI)
+        if getattr(mem, "tmode", "") == "DTCS":
+            tx_code = getattr(mem, "dtcs", 0) or 0
+            rx_code = getattr(mem, "rx_dtcs", tx_code) or tx_code
+            if tx_code == 0 or rx_code == 0:
+                mem.tmode = ""
         if mem.tmode == "":
             channel.tx_tone = channel.tx_tone.__class__.off()
             channel.rx_tone = channel.rx_tone.__class__.off()
